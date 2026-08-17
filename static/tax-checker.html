@@ -1,770 +1,520 @@
-<!DOCTYPE html>
-<html lang="ko">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>세금·건강보험료 판정 확인서</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Noto+Serif+KR:wght@500;600;700;900&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" as="style" crossorigin href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.css">
-<style>
-  :root{
-    --paper:#F6F2E7;
-    --paper-2:#EFE9D8;
-    --ink:#22262B;
-    --ink-soft:#6B6558;
-    --navy:#1B3A5C;
-    --navy-soft:rgba(27,58,92,0.08);
-    --line:#C9C2AC;
-    --stamp:#A6392B;
-    --stamp-soft:rgba(166,57,43,0.08);
-    --positive:#2F6F4E;
-    --positive-soft:rgba(47,111,78,0.10);
-  }
-  *{box-sizing:border-box;}
-  html,body{margin:0;padding:0;}
-  body{
-    background:
-      repeating-linear-gradient(0deg, rgba(0,0,0,0.015) 0px, rgba(0,0,0,0.015) 1px, transparent 1px, transparent 34px),
-      var(--paper);
-    color:var(--ink);
-    font-family:'Pretendard Variable','Pretendard',-apple-system,sans-serif;
-    letter-spacing:-0.01em;
-    padding:28px 16px 60px;
-    min-height:100vh;
-  }
-  .mono{font-family:'JetBrains Mono',ui-monospace,monospace;font-variant-numeric:tabular-nums;}
-  .sheet{
-    max-width:880px;margin:0 auto;
-    background:var(--paper);
-    border:1px solid var(--line);
-    box-shadow:0 1px 2px rgba(34,38,43,0.05), 0 18px 40px -22px rgba(34,38,43,0.35);
-    position:relative;
-  }
-  .sheet::before{
-    content:"";position:absolute;inset:8px;
-    border:1px solid var(--line);
-    pointer-events:none;
-  }
-  .doc-head{
-    padding:30px 34px 20px;
-    border-bottom:2px solid var(--navy);
-    display:flex;justify-content:space-between;align-items:flex-end;gap:16px;flex-wrap:wrap;
-  }
-  .doc-title{
-    font-family:'Noto Serif KR',serif;font-weight:800;font-size:1.5rem;color:var(--navy);
-    letter-spacing:-0.01em;margin:0 0 6px;
-  }
-  .doc-sub{font-size:0.8rem;color:var(--ink-soft);margin:0;}
-  .doc-no{font-family:'JetBrains Mono',monospace;font-size:0.72rem;color:var(--ink-soft);text-align:right;line-height:1.6;}
-  .doc-no b{color:var(--navy);}
+"""
+etf_classifier.py
 
-  .form-section{padding:26px 34px 8px;}
-  .field-row{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px;}
-  @media (max-width:640px){.field-row{grid-template-columns:1fr;}}
-  label.field-label{
-    display:block;font-size:0.72rem;font-weight:700;color:var(--navy);
-    letter-spacing:0.03em;margin-bottom:6px;
-  }
-  input[type=text],input[type=number],select{
-    width:100%;background:var(--paper-2);border:1px solid var(--line);
-    border-radius:4px;padding:9px 11px;font-size:0.92rem;color:var(--ink);
-    font-family:'JetBrains Mono','Pretendard Variable',monospace;
-  }
-  select{font-family:'Pretendard Variable',sans-serif;}
-  input:focus,select:focus{outline:none;border-color:var(--navy);box-shadow:0 0 0 3px var(--navy-soft);}
-  .hint{font-size:0.74rem;color:var(--ink-soft);margin-top:5px;line-height:1.5;}
-  .detect-chip{
-    display:inline-flex;align-items:center;gap:6px;margin-top:8px;
-    background:var(--navy-soft);color:var(--navy);border-radius:20px;
-    padding:5px 12px;font-size:0.78rem;font-weight:600;
-  }
-  .detect-chip.unknown{background:var(--stamp-soft);color:var(--stamp);}
-  .override-row{margin-top:10px;}
+tax-checker.html이 호출하는 /api/classify-ticker/<code> 엔드포인트.
 
-  .amounts-toggle{
-    background:none;border:1px dashed var(--line);border-radius:6px;
-    color:var(--ink-soft);font-size:0.78rem;padding:7px 12px;cursor:pointer;
-    margin:6px 0 18px;
-  }
-  .amounts-toggle:hover{border-color:var(--navy);color:var(--navy);}
-  .amounts-box{display:none;}
-  .amounts-box.open{display:grid;}
+흐름:
+  브라우저(tax-checker.html) → 우리 Flask 서버 → 네이버 금융 ETF 목록 API
+  (서버간 호출이라 CORS 문제 없음, 응답은 하루 1회만 네이버에서 새로 받아와서 캐싱)
 
-  .verdict-wrap{padding:6px 34px 10px;position:relative;}
-  .verdict-head{
-    display:flex;justify-content:space-between;align-items:center;
-    margin:18px 0 14px;padding-top:18px;border-top:1px dashed var(--line);
-  }
-  .verdict-head h2{
-    font-family:'Noto Serif KR',serif;font-size:1.05rem;color:var(--ink);margin:0;
-  }
-  .verdict-head span{font-size:0.72rem;color:var(--ink-soft);font-family:'JetBrains Mono',monospace;}
+기존 Flask 앱(app.py)에 붙이는 법:
 
-  table{width:100%;border-collapse:collapse;font-size:0.86rem;}
-  th,td{border:1px solid var(--line);padding:10px 12px;text-align:left;vertical-align:top;}
-  thead th{
-    background:var(--navy);color:var(--paper);font-weight:700;font-size:0.78rem;
-    letter-spacing:0.02em;
-  }
-  tbody th{
-    background:var(--paper-2);font-weight:700;font-size:0.8rem;color:var(--navy);width:22%;
-  }
-  td .cell-main{font-weight:700;margin-bottom:3px;}
-  td .cell-sub{color:var(--ink-soft);font-size:0.78rem;line-height:1.5;}
-  td.isa-na{color:var(--ink-soft);font-style:italic;background:repeating-linear-gradient(45deg, transparent, transparent 8px, rgba(0,0,0,0.02) 8px, rgba(0,0,0,0.02) 16px);}
-  .tag{display:inline-block;font-size:0.68rem;font-weight:700;padding:2px 7px;border-radius:3px;margin-bottom:4px;}
-  .tag.pos{background:var(--positive-soft);color:var(--positive);}
-  .tag.warn{background:var(--stamp-soft);color:var(--stamp);}
-  .tag.neu{background:var(--navy-soft);color:var(--navy);}
+    from etf_classifier import etf_bp
+    app.register_blueprint(etf_bp)
 
-  .stamp{
-    position:absolute;right:38px;top:-6px;
-    width:104px;height:104px;border:3px solid var(--stamp);border-radius:50%;
-    color:var(--stamp);display:flex;align-items:center;justify-content:center;
-    text-align:center;font-family:'Noto Serif KR',serif;font-weight:800;font-size:0.78rem;
-    line-height:1.3;transform:rotate(-14deg);opacity:0.9;
-    box-shadow:inset 0 0 0 3px rgba(166,57,43,0.15);
-    pointer-events:none;
-  }
-  @media (max-width:640px){.stamp{position:static;transform:rotate(-6deg);margin:10px auto 0;}}
+로컬에서 단독 실행해보고 싶으면 이 파일 맨 아래 __main__ 블록을 사용하세요.
+"""
 
-  .footnotes{
-    padding:22px 34px 30px;border-top:2px solid var(--navy);margin-top:24px;
-    font-size:0.74rem;color:var(--ink-soft);line-height:1.75;
-  }
-  .footnotes ol{margin:0;padding-left:18px;}
-  .footnotes li{margin-bottom:6px;}
-  .footnotes .flag{color:var(--stamp);font-weight:700;}
+import re
+import time
+import threading
+import logging
+import xml.etree.ElementTree as ET
+from datetime import datetime, timezone
 
-  .empty-state{padding:8px 34px 30px;color:var(--ink-soft);font-size:0.85rem;}
+import requests
+from flask import Blueprint, jsonify
 
-  .quote-wrap{padding:0 34px;}
-  .quote-card{
-    display:flex;flex-wrap:wrap;gap:22px;align-items:baseline;
-    background:var(--paper-2);border:1px solid var(--line);border-radius:6px;
-    padding:12px 16px;margin-top:4px;
-  }
-  .quote-item{display:flex;align-items:baseline;gap:8px;}
-  .quote-label{font-size:0.7rem;font-weight:700;color:var(--navy);letter-spacing:0.02em;}
-  .quote-val{font-family:'JetBrains Mono',monospace;font-size:0.92rem;font-weight:700;color:var(--ink);}
-  .quote-change{font-family:'JetBrains Mono',monospace;font-size:0.76rem;color:var(--ink-soft);}
-  .quote-note{width:100%;font-size:0.7rem;color:var(--ink-soft);margin-top:2px;}
-  .quote-link{font-size:0.78rem;color:var(--navy);text-decoration:underline;text-underline-offset:2px;}
-  .quote-link:hover{opacity:0.75;}
-  .quote-card.quote-error{color:var(--stamp);font-size:0.8rem;background:var(--stamp-soft);border-color:var(--stamp);}
+logger = logging.getLogger(__name__)
 
-  .chart-wrap{padding:0 34px;margin-top:10px;}
-  .chart-card{
-    background:var(--paper-2);border:1px solid var(--line);border-radius:6px;
-    padding:12px 16px 10px;
-  }
-  .chart-head{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:2px;}
-  .chart-title{font-size:0.74rem;font-weight:700;color:var(--navy);letter-spacing:0.02em;}
-  .chart-pct{font-family:'JetBrains Mono',monospace;font-size:0.9rem;font-weight:700;}
-  .chart-pct.pos{color:var(--positive);}
-  .chart-pct.neg{color:var(--stamp);}
-  .chart-svg-wrap{width:100%;overflow:hidden;margin-top:2px;}
-  .chart-foot{
-    display:flex;justify-content:space-between;align-items:center;margin-top:4px;
-    font-size:0.68rem;color:var(--ink-soft);font-family:'JetBrains Mono',monospace;
-  }
-  .chart-minmax{font-family:'Pretendard Variable',sans-serif;}
-  .chart-loading{font-size:0.76rem;color:var(--ink-soft);padding:10px 2px;}
-</style>
-</head>
-<body>
+etf_bp = Blueprint("etf_classifier", __name__)
 
-<div class="sheet">
-  <div class="doc-head">
-    <div>
-      <p class="doc-title">세금·건강보험료 판정 확인서</p>
-      <p class="doc-sub">종목코드 · 건강보험 자격 기준 참고용 계산 — 국세청/공단 공식 문서 아님</p>
-    </div>
-    <div class="doc-no">문서번호 <b id="docNo">TCK-000000</b><br>기준일자 2026-08-16</div>
-  </div>
+NAVER_ETF_LIST_URL = "https://finance.naver.com/api/sise/etfItemList.nhn"
+CACHE_TTL_SECONDS = 24 * 60 * 60  # 하루 1회 갱신
+REQUEST_TIMEOUT = 5
 
-  <div class="form-section">
-    <div class="field-row">
-      <div>
-        <label class="field-label">01. 종목코드 / 티커</label>
-        <input type="text" id="tickerInput" placeholder="예: 458730 또는 SCHD" autocomplete="off">
-        <div id="detectArea"></div>
-      </div>
-      <div>
-        <label class="field-label">02. 건강보험 자격</label>
-        <select id="insuranceSelect">
-          <option value="local">지역가입자</option>
-          <option value="worker">직장가입자</option>
-          <option value="dependent">피부양자 (건물·토지 등 재산요건 별도)</option>
-        </select>
-        <div class="hint">피부양자는 이 계산기가 다루는 <b>소득요건</b>만 봅니다. 재산(부동산) 요건은 별도 심사이니 소득이 기준 이내여도 안심하지 마세요.</div>
-      </div>
-    </div>
+# 네이버는 Referer 없이 호출하면 이따금 빈 응답/차단을 줄 수 있어 브라우저처럼 보이는 헤더를 붙임
+_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+    ),
+    "Referer": "https://finance.naver.com/sise/etf.naver",
+}
 
-    <button class="amounts-toggle" id="amountsToggleBtn" type="button">+ 연간 매매차익 · 분배금 금액 입력해서 실제 원화로 계산하기 (선택)</button>
-    <div class="field-row amounts-box" id="amountsBox">
-      <div>
-        <label class="field-label">연간 매매차익(원)</label>
-        <input type="number" id="capGainInput" placeholder="예: 100000000">
-      </div>
-      <div>
-        <label class="field-label">연간 분배금 · 배당금(원)</label>
-        <input type="number" id="distInput" placeholder="예: 30000000">
-      </div>
-    </div>
-  </div>
+# ---------------------------------------------------------------------------
+# ⚠ tabCode → 세제 카테고리 매핑에 대한 중요 주의사항
+#
+# 네이버 ETF 목록 API가 반환하는 각 종목의 "etfTabCode" 필드는 네이버
+# ETF 페이지의 탭 구분(국내 시가총액형 / 국내 업종·테마 / 국내 파생 /
+# 해외 주식 / 원자재 / 채권 / 기타)에 대응하는 값으로 알려져 있습니다.
+#
+# 세법상 "국내주식형 ETF"(매매차익 비과세)로 인정되려면 국내 주식에
+# 60% 이상 투자해야 하므로, 대략 아래처럼 매핑했습니다:
+#   1, 2 (국내 시가총액형 / 국내 업종·테마)      → domestic   (매매차익 비과세)
+#   3, 4, 5, 6, 7 (국내파생·해외주식·원자재·채권·기타) → overseas_etf (매매차익도 배당소득세)
+#
+# 다만 네이버가 이 코드값을 바꾸거나, 국내파생(레버리지/인버스) 종목
+# 중 실제로는 다르게 분류되는 예외가 있을 수 있습니다.
+# 배포 전에 반드시 GET /api/classify-ticker/_debug 를 한 번 호출해서
+# 탭코드별 종목명이 실제로 맞게 묶이는지 눈으로 확인하세요.
+# ---------------------------------------------------------------------------
+TAB_CODE_CATEGORY = {
+    1: "domestic",
+    2: "domestic",
+    3: "overseas_etf",
+    4: "overseas_etf",
+    5: "overseas_etf",
+    6: "overseas_etf",
+    7: "overseas_etf",
+}
+DEFAULT_CATEGORY_FOR_UNKNOWN_TAB = "overseas_etf"  # 모르는 코드는 보수적으로(세금 더 나오는 쪽으로) 처리
 
-  <div class="quote-wrap" id="quoteWrap"></div>
+_cache_lock = threading.Lock()
+_cache = {"data": None, "fetched_at": 0.0}
 
-  <div class="chart-wrap" id="chartWrap"></div>
 
-  <div class="verdict-wrap" id="verdictWrap"></div>
+def _fetch_and_build_map():
+    """네이버에서 전체 ETF 목록을 받아 {종목코드: {name, tabCode, category}} 형태로 변환"""
+    resp = requests.get(NAVER_ETF_LIST_URL, headers=_HEADERS, timeout=REQUEST_TIMEOUT)
+    resp.raise_for_status()
+    payload = resp.json()
+    items = payload.get("result", {}).get("etfItemList", [])
 
-  <div class="footnotes">
-    <ol id="footnoteList"></ol>
-  </div>
-</div>
+    mapping = {}
+    for it in items:
+        code = it.get("itemcode")
+        if not code:
+            continue
+        tab = it.get("etfTabCode")
+        mapping[code] = {
+            "name": it.get("itemname"),
+            "tabCode": tab,
+            "category": TAB_CODE_CATEGORY.get(tab, DEFAULT_CATEGORY_FOR_UNKNOWN_TAB),
+        }
 
-<script>
-// ------------------------------------------------------------------
-// 국내 상장 종목코드 → 세제 카테고리 판정: 우리 Flask 서버의
-// /api/classify-ticker/<code> 를 호출해서 실시간으로 받아온다.
-// (서버가 네이버 금융 ETF 목록을 하루 1회 캐싱해서 응답 — 상세는 etf_classifier.py)
-// ------------------------------------------------------------------
-const API_BASE = ''; // 이 html이 Flask 서버와 같은 오리진에서 서빙된다는 가정. 다르면 예: 'https://your-flask-host.com'
-const tickerCache = new Map(); // 같은 세션 안에서 같은 종목코드 재조회 방지
+    if not mapping:
+        raise ValueError("네이버 응답에 ETF 목록이 비어있습니다 (응답 포맷이 바뀌었을 수 있음)")
 
-// 종목코드(예: 458730) → 국내 상장증권 ISIN(예: KR7458730009) 계산.
-// KRX 상장증권은 NSIN이 "7" + 6자리코드 + "00" 형태이고, 마지막 체크디지트는
-// 표준 ISIN 체크디지트 알고리즘(Luhn 변형)으로 계산됨. FunETF 상세페이지 링크에 사용.
-function krIsinFromCode(code) {
-  const isin11 = 'KR' + '7' + code + '00'; // 체크디지트 제외 11자리
-  let digitStr = '';
-  for (const ch of isin11) {
-    digitStr += /[0-9]/.test(ch) ? ch : (ch.charCodeAt(0) - 55).toString(); // A=10 ... Z=35
-  }
-  let sum = 0;
-  let doubleIt = true; // 오른쪽 끝 숫자부터 하나 걸러 두 배
-  for (let i = digitStr.length - 1; i >= 0; i--) {
-    let d = parseInt(digitStr[i], 10);
-    if (doubleIt) {
-      d *= 2;
-      if (d > 9) d -= 9;
+    return mapping
+
+
+def get_etf_map(force_refresh=False):
+    """캐시된 ETF 맵을 반환. 하루 지났으면 자동 갱신, 갱신 실패시 기존 캐시라도 계속 사용."""
+    with _cache_lock:
+        is_stale = (
+            _cache["data"] is None
+            or (time.time() - _cache["fetched_at"]) > CACHE_TTL_SECONDS
+        )
+        cached = _cache["data"]
+
+    if not is_stale and not force_refresh:
+        return cached
+
+    try:
+        fresh = _fetch_and_build_map()
+    except Exception as e:
+        logger.warning("네이버 ETF 목록 갱신 실패, 기존 캐시 유지: %s", e)
+        if cached is not None:
+            return cached
+        raise
+
+    with _cache_lock:
+        _cache["data"] = fresh
+        _cache["fetched_at"] = time.time()
+    return fresh
+
+
+@etf_bp.route("/api/classify-ticker/<code>")
+def classify_ticker(code):
+    code = (code or "").strip()
+    if not re.fullmatch(r"\d{6}", code):
+        return jsonify({"error": "6자리 국내 종목코드만 지원합니다"}), 400
+
+    try:
+        etf_map = get_etf_map()
+    except Exception as e:
+        return jsonify({"error": f"네이버 ETF 목록 조회 실패: {e}"}), 502
+
+    hit = etf_map.get(code)
+    if hit:
+        return jsonify(
+            {
+                "code": code,
+                "name": hit["name"],
+                "isEtf": True,
+                "category": hit["category"],
+                "tabCode": hit["tabCode"],
+            }
+        )
+
+    # ETF 목록에 없는 6자리 코드 → 개별 국내주식으로 간주 (매매차익 비과세)
+    # 주의: 존재하지 않는 코드를 넣어도 여기로 떨어져 domestic으로 표시됨
+    return jsonify({"code": code, "name": None, "isEtf": False, "category": "domestic"})
+
+
+@etf_bp.route("/api/classify-ticker/_debug")
+def classify_debug():
+    """tabCode별 종목명 샘플을 보여줌 — 매핑이 실제로 맞는지 배포 전에 한 번 확인하는 용도"""
+    etf_map = get_etf_map(force_refresh=True)
+    by_tab = {}
+    for code, info in etf_map.items():
+        by_tab.setdefault(info["tabCode"], []).append(f'{code} {info["name"]}')
+    return jsonify(
+        {
+            "total_etf_count": len(etf_map),
+            "by_tab_code": {str(tab): names[:8] for tab, names in sorted(by_tab.items(), key=lambda x: (x[0] is None, x[0]))},
+        }
+    )
+
+
+# ---------------------------------------------------------------------------
+# 현재가 · 배당수익률 조회 (/api/quote/<code>)
+#
+# 현재가는 네이버 비공식 JSON API로 자동 조회:
+#   polling.finance.naver.com/api/realtime/domestic/stock/{code}
+#
+# ⚠ 배당수익률(ETF는 "분배율")은 자동 수집처를 못 찾았습니다:
+#   - 네이버: ETF엔 배당수익률 필드 자체가 없음 (개별주식만 있음, 확인됨)
+#   - KRX 공식 API: 분배율 필드 없음
+#   - 운용사(TIGER/KODEX 등): 운용사마다 사이트가 달라 자동화하려면
+#     운용사별로 각각 스크레이퍼를 만들어야 함 (일 커짐)
+# 그래서 개별주식은 네이버 API로 자동 조회하고, ETF는 아래
+# MANUAL_DIVIDEND_YIELD 딕셔너리에 직접 적어둔 값을 씁니다.
+# 값 찾는 곳: 운용사 상품 상세페이지 (TIGER면 investments.miraeasset.com/tigeretf,
+# KODEX면 kodex.com 등) — 대략 분기~반기에 한 번씩 업데이트하면 충분합니다.
+#
+# ⚠ "배당주기"(월배당/분기배당 등)도 마찬가지로 공개 API가 없어서,
+# 프론트엔드(tax-checker.html)에서 종목명에 "월배당" 표기가 있는지로만 추정합니다.
+#
+# 시세는 하루 종일 캐싱하면 안 되니 TTL을 30초로 짧게 둡니다.
+# ---------------------------------------------------------------------------
+REALTIME_QUOTE_URL = "https://polling.finance.naver.com/api/realtime/domestic/stock/{code}"
+INTEGRATION_URL = "https://m.stock.naver.com/api/stock/{code}/integration"
+QUOTE_CACHE_TTL_SECONDS = 30
+
+# m.stock.naver.com(모바일 API)은 finance.naver.com용 Referer를 그대로 보내면
+# 도메인이 안 맞아 이상한 요청으로 보고 409로 막는 경우가 있어 별도 헤더를 씀
+_MOBILE_HEADERS = {
+    "User-Agent": _HEADERS["User-Agent"],
+    "Referer": "https://m.stock.naver.com/",
+}
+
+# 종목코드 → 연환산 배당수익률(분배율) %. 자주 보는 ETF만 채워두고 가끔 업데이트하세요.
+MANUAL_DIVIDEND_YIELD = {
+    # "458730": 3.8,  # TIGER 미국배당다우존스 — 예시. 실제 값으로 바꿔서 쓰세요.
+    # "379800": 1.3,  # KODEX 미국S&P500
+}
+
+_quote_cache_lock = threading.Lock()
+_quote_cache = {}  # code -> (fetched_at, data)
+
+
+def _fetch_quote(code):
+    # 1) 현재가/등락률 (필수) — 이게 실패하면 시세 카드 전체를 못 그리므로 그대로 예외를 던짐
+    r1 = requests.get(REALTIME_QUOTE_URL.format(code=code), headers=_HEADERS, timeout=REQUEST_TIMEOUT)
+    r1.raise_for_status()
+    datas = r1.json().get("datas") or []
+    price_info = datas[0] if datas else {}
+
+    # 2) 배당수익률 등 부가 정보 (선택) — 여기서 실패해도 위에서 받은 현재가는 그대로 살려서 반환.
+    #    (예: m.stock.naver.com이 일시적으로 409/404를 주는 경우가 있음 — 코드가 존재하지
+    #    않거나 통합 정보가 없는 종목일 수 있으니 부가 정보만 비워두고 넘어감)
+    info_map = {}
+    try:
+        r2 = requests.get(
+            INTEGRATION_URL.format(code=code), headers=_MOBILE_HEADERS, timeout=REQUEST_TIMEOUT
+        )
+        r2.raise_for_status()
+        total_infos = r2.json().get("totalInfos") or []
+        info_map = {row.get("code"): row.get("value") for row in total_infos}
+    except Exception as e:
+        logger.warning("배당/통합정보 조회 실패(%s) — 현재가만 표시: %s", code, e)
+
+    # 수동 등록값이 있으면 그게 우선 (ETF는 API에 값이 없는 경우가 대부분이라)
+    manual_yield = MANUAL_DIVIDEND_YIELD.get(code)
+    if manual_yield is not None:
+        dividend_yield = manual_yield
+        dividend_source = "manual"
+    else:
+        dividend_yield = info_map.get("dividendYieldRatio")
+        dividend_source = "api" if dividend_yield else None
+
+    return {
+        "code": code,
+        "price": price_info.get("closePrice"),
+        "changePrice": price_info.get("compareToPreviousClosePrice"),
+        "changeRate": price_info.get("fluctuationsRatio"),
+        "marketStatus": price_info.get("marketStatus"),
+        "dividendYieldRatio": dividend_yield,
+        "dividendYieldSource": dividend_source,  # "api" | "scrape" | None — 프론트에서 출처 표시용
+        "dividendPerShare": info_map.get("dividend"),
     }
-    sum += d;
-    doubleIt = !doubleIt;
-  }
-  const checkDigit = (10 - (sum % 10)) % 10;
-  return isin11 + checkDigit;
+
+
+def get_quote(code, force_refresh=False):
+    with _quote_cache_lock:
+        cached = _quote_cache.get(code)
+    if not force_refresh and cached and (time.time() - cached[0]) < QUOTE_CACHE_TTL_SECONDS:
+        return cached[1]
+
+    data = _fetch_quote(code)
+    with _quote_cache_lock:
+        _quote_cache[code] = (time.time(), data)
+    return data
+
+
+@etf_bp.route("/api/quote/<code>")
+def quote_ticker(code):
+    code = (code or "").strip()
+    if not re.fullmatch(r"\d{6}", code):
+        return jsonify({"error": "6자리 국내 종목코드만 지원합니다"}), 400
+    try:
+        return jsonify(get_quote(code))
+    except Exception as e:
+        return jsonify({"error": f"시세 조회 실패: {e}"}), 502
+
+
+# ---------------------------------------------------------------------------
+# 일별 시세(차트용) 조회 (/api/chart/<code>)
+#
+# - 국내 6자리 코드: 네이버 fchart 비공식 XML API (일봉)
+#     https://fchart.stock.naver.com/sise.nhn?symbol=CODE&timeframe=day&count=N&requestType=0
+#   응답이 XML이고 각 <item data="20260101|시가|고가|저가|종가|거래량|외국인비율"/> 형태.
+#
+# - 해외(미국) 티커: 2단계 폴백
+#     1순위) 야후 파이낸스 비공식 차트 JSON API (가장 안정적, 대부분 티커 지원)
+#         https://query1.finance.yahoo.com/v8/finance/chart/{TICKER}?range=6mo&interval=1d
+#     2순위) stooq.com 무료 CSV 종가 API (야후가 막히거나 없는 티커일 때 폴백)
+#         https://stooq.com/q/d/l/?s={ticker}.us&i=d
+#   ⚠ 두 소스 모두 반드시 일반 브라우저 헤더를 써야 합니다 — 네이버용 Referer를
+#   그대로 보내면 야후/스투크가 이상한 요청으로 보고 빈 응답을 줄 수 있어서
+#   국내용 _HEADERS와는 별도로 _US_HEADERS를 씁니다.
+#
+# 전부 비공식/무료 소스라 스키마가 예고 없이 바뀔 수 있습니다.
+# 10분 캐싱 — 차트는 실시간까지는 필요 없어서 시세(30초)보다 길게 잡음.
+# ---------------------------------------------------------------------------
+KR_CHART_URL = "https://fchart.stock.naver.com/sise.nhn"
+YAHOO_CHART_URL_TMPL = "https://query1.finance.yahoo.com/v8/finance/chart/{ticker}"
+STOOQ_CHART_URL_TMPL = "https://stooq.com/q/d/l/?s={ticker}.us&i=d"
+CHART_CACHE_TTL_SECONDS = 10 * 60
+CHART_POINT_COUNT = 365  # 최근 1년(일봉)
+
+_US_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+    ),
+    "Accept": "application/json, text/plain, */*",
 }
 
-function funetfProductUrl(code) {
-  return `https://www.funetf.co.kr/product/etf/view/${krIsinFromCode(code)}`;
-}
+_chart_cache_lock = threading.Lock()
+_chart_cache = {}  # "kr:005930" / "us:AAPL" -> (fetched_at, points)
 
-async function classifyKoreanTicker(code) {
-  if (tickerCache.has(code)) return tickerCache.get(code);
-  const res = await fetch(`${API_BASE}/api/classify-ticker/${code}`);
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({}));
-    throw new Error(body.error || `서버 응답 오류 (${res.status})`);
-  }
-  const data = await res.json();
-  tickerCache.set(code, data);
-  return data;
-}
 
-const quoteCache = new Map();
-const QUOTE_CACHE_MS = 30_000; // 시세는 짧게만 캐시 (30초) — 너무 자주 바뀌니까
+def _decode_kr_xml(resp):
+    """네이버 fchart는 EUC-KR로 응답하는 경우가 있는데, 파이썬 expat 파서는
+    멀티바이트 인코딩이 선언된 XML을 바이트째로 넘기면 못 읽는다
+    ("multi-byte encodings are not supported"). 그래서 직접 디코딩한 뒤
+    <?xml ... encoding="..."?> 선언부를 떼고 유니코드 문자열로 파싱한다."""
+    raw = resp.content
+    text = None
+    for enc in ("euc-kr", "utf-8", "cp949"):
+        try:
+            text = raw.decode(enc)
+            break
+        except UnicodeDecodeError:
+            continue
+    if text is None:
+        text = raw.decode("utf-8", errors="replace")
+    return re.sub(r"^\s*<\?xml[^>]*\?>", "", text, count=1)
 
-async function fetchKoreanQuote(code) {
-  const cached = quoteCache.get(code);
-  if (cached && Date.now() - cached.at < QUOTE_CACHE_MS) return cached.data;
-  const res = await fetch(`${API_BASE}/api/quote/${code}`);
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({}));
-    throw new Error(body.error || `시세 서버 오류 (${res.status})`);
-  }
-  const data = await res.json();
-  quoteCache.set(code, { at: Date.now(), data });
-  return data;
-}
 
-// 배당주기는 네이버에 공개 API가 없어서, 종목명에 들어있는 표기로만 추정합니다.
-// (정확한 지급주기가 필요하면 증권사 앱/HTS에서 다시 확인하세요)
-function guessDividendCycle(name) {
-  if (!name) return null;
-  if (/월배당|먼슬리|monthly/i.test(name)) return '월배당 (종목명 기준 추정)';
-  if (/분기배당|quarterly/i.test(name)) return '분기배당 (종목명 기준 추정)';
-  if (/반기배당|semi.?annual/i.test(name)) return '반기배당 (종목명 기준 추정)';
-  if (/연배당|연1회|annual/i.test(name)) return '연배당 (종목명 기준 추정)';
-  return null;
-}
+def _fetch_kr_chart(code, count=CHART_POINT_COUNT):
+    params = {"symbol": code, "timeframe": "day", "count": str(count), "requestType": "0"}
+    resp = requests.get(KR_CHART_URL, params=params, headers=_HEADERS, timeout=REQUEST_TIMEOUT)
+    resp.raise_for_status()
+    root = ET.fromstring(_decode_kr_xml(resp))
+    points = []
+    for item in root.findall(".//item"):
+        raw = item.get("data")
+        if not raw:
+            continue
+        parts = raw.split("|")
+        if len(parts) < 5:
+            continue
+        date_s, open_s, high_s, low_s, close_s = parts[0], parts[1], parts[2], parts[3], parts[4]
+        try:
+            o, h, l, c = float(open_s), float(high_s), float(low_s), float(close_s)
+        except (TypeError, ValueError):
+            continue
+        if not date_s or len(date_s) != 8 or c <= 0:
+            continue
+        points.append({
+            "date": f"{date_s[0:4]}-{date_s[4:6]}-{date_s[6:8]}",
+            "open": o, "high": h, "low": l, "close": c,
+        })
+    return points
 
-function fmtWonAmount(raw) {
-  if (raw === null || raw === undefined || raw === '') return '-';
-  const n = Number(String(raw).replace(/,/g, ''));
-  return Number.isFinite(n) ? n.toLocaleString('ko-KR') + '원' : String(raw);
-}
 
-function renderQuote(quoteWrap, name, quote, error) {
-  if (error) {
-    quoteWrap.innerHTML = `<div class="quote-card quote-error">시세/배당 정보 조회 실패: ${error.message} (판정 결과에는 영향 없음)</div>`;
-    return;
-  }
-  if (!quote) {
-    quoteWrap.innerHTML = '';
-    return;
-  }
-  const rate = quote.changeRate !== null && quote.changeRate !== undefined ? Number(quote.changeRate) : null;
-  const changeHtml = rate !== null && Number.isFinite(rate)
-    ? `<span class="quote-change">${rate > 0 ? '+' : ''}${rate}%</span>` : '';
-  const cycle = guessDividendCycle(name) || '종목명만으로는 확인 불가';
-  const yieldSourceNote = quote.dividendYieldSource === 'manual' ? ' <span class="quote-change">(수동 입력값)</span>' : '';
-  const funetfUrl = funetfProductUrl(quote.code);
-  const yieldHtml = quote.dividendYieldRatio
-    ? `<span class="quote-val">${quote.dividendYieldRatio}%</span>${yieldSourceNote}`
-    : `<span class="quote-val">-</span> <a href="${funetfUrl}" target="_blank" rel="noopener" class="quote-link">분배금 상세보기 →</a>`;
+def _fetch_us_chart_yahoo(ticker, count=CHART_POINT_COUNT):
+    params = {"range": "1y", "interval": "1d"}
+    resp = requests.get(
+        YAHOO_CHART_URL_TMPL.format(ticker=ticker),
+        params=params,
+        headers=_US_HEADERS,
+        timeout=REQUEST_TIMEOUT,
+    )
+    resp.raise_for_status()
+    payload = resp.json()
+    results = ((payload.get("chart") or {}).get("result")) or []
+    if not results:
+        err = ((payload.get("chart") or {}).get("error")) or {}
+        raise ValueError(err.get("description") or "야후 파이낸스 응답에 데이터가 없습니다")
 
-  quoteWrap.innerHTML = `
-    <div class="quote-card">
-      <div class="quote-item"><span class="quote-label">현재가</span><span class="quote-val">${fmtWonAmount(quote.price)}</span>${changeHtml}</div>
-      <div class="quote-item"><span class="quote-label">배당수익률</span>${yieldHtml}</div>
-      <div class="quote-item"><span class="quote-label">배당주기</span><span class="quote-val" style="font-size:0.82rem;">${cycle}</span></div>
-      <div class="quote-note">네이버 금융 시세 기준(최대 30초 지연) · 배당주기는 종목명 표기 기반 추정치이니 정확한 지급주기는 증권사 앱에서 재확인하세요</div>
-    </div>`;
-}
+    node = results[0]
+    timestamps = node.get("timestamp") or []
+    quote = (((node.get("indicators") or {}).get("quote")) or [{}])[0]
+    opens = quote.get("open") or []
+    highs = quote.get("high") or []
+    lows = quote.get("low") or []
+    closes = quote.get("close") or []
 
-// ------------------------------------------------------------------
-// 종목 자동인식 시 보여줄 주가 차트
-// (국내 6자리는 서버가 네이버 fchart를, 해외 티커는 stooq.com CSV를 프록시해서 반환)
-// ------------------------------------------------------------------
-const chartCache = new Map();
-const CHART_CACHE_MS = 10 * 60 * 1000; // 서버도 10분 캐시 — 클라이언트는 그보다 짧게
+    points = []
+    for i, ts in enumerate(timestamps):
+        c = closes[i] if i < len(closes) else None
+        if c is None:
+            continue
+        o = opens[i] if i < len(opens) and opens[i] is not None else c
+        h = highs[i] if i < len(highs) and highs[i] is not None else c
+        l = lows[i] if i < len(lows) and lows[i] is not None else c
+        date_s = datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%d")
+        points.append({"date": date_s, "open": float(o), "high": float(h), "low": float(l), "close": float(c)})
+    return points[-count:]
 
-async function fetchChartData(code) {
-  const cached = chartCache.get(code);
-  if (cached && Date.now() - cached.at < CHART_CACHE_MS) return cached.data;
-  const res = await fetch(`${API_BASE}/api/chart/${code}`);
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({}));
-    throw new Error(body.error || `차트 서버 오류 (${res.status})`);
-  }
-  const data = await res.json();
-  chartCache.set(code, { at: Date.now(), data });
-  return data;
-}
 
-function fmtChartPrice(n, market) {
-  if (!Number.isFinite(n)) return '-';
-  return market === 'kr' ? Math.round(n).toLocaleString('ko-KR') + '원' : '$' + n.toFixed(2);
-}
+def _fetch_us_chart_stooq(ticker, count=CHART_POINT_COUNT):
+    url = STOOQ_CHART_URL_TMPL.format(ticker=ticker.lower())
+    resp = requests.get(url, headers=_US_HEADERS, timeout=REQUEST_TIMEOUT)
+    resp.raise_for_status()
+    lines = resp.text.strip().splitlines()
+    points = []
+    for line in lines[1:]:  # 첫 줄은 헤더(Date,Open,High,Low,Close,Volume)
+        cols = line.split(",")
+        if len(cols) < 5:
+            continue
+        date_s, open_s, high_s, low_s, close_s = cols[0], cols[1], cols[2], cols[3], cols[4]
+        try:
+            o, h, l, c = float(open_s), float(high_s), float(low_s), float(close_s)
+        except (TypeError, ValueError):
+            continue
+        if c <= 0:
+            continue
+        points.append({"date": date_s, "open": o, "high": h, "low": l, "close": c})
+    return points[-count:]
 
-function fmtChartDate(d) {
-  const parts = String(d).split('-');
-  return parts.length === 3 ? `${parts[1]}/${parts[2]}` : d;
-}
 
-// 일봉 캔들스틱 차트 + 오른쪽 가격축
-function buildCandleChartSvg(points, market) {
-  const W = 680, H = 224;
-  const padL = 4, padR = 62, padT = 10, padB = 22;
-  const innerW = W - padL - padR;
-  const innerH = H - padT - padB;
-  const n = points.length;
+def _fetch_us_chart(ticker, count=CHART_POINT_COUNT):
+    """야후를 먼저 시도하고, 실패하거나 빈 데이터면 stooq로 폴백."""
+    errors = []
+    for label, fetcher in (("야후", _fetch_us_chart_yahoo), ("stooq", _fetch_us_chart_stooq)):
+        try:
+            points = fetcher(ticker, count)
+            if points:
+                return points
+            errors.append(f"{label}: 데이터 없음")
+        except Exception as e:
+            errors.append(f"{label}: {e}")
+    raise ValueError(" / ".join(errors) if errors else "데이터를 가져오지 못했습니다")
 
-  const highs = points.map(p => (p.high ?? p.close));
-  const lows = points.map(p => (p.low ?? p.close));
-  let min = Math.min(...lows);
-  let max = Math.max(...highs);
-  if (min === max) { min -= 1; max += 1; }
-  const margin = (max - min) * 0.06;
-  min -= margin; max += margin;
-  const span = (max - min) || 1;
 
-  const xAt = (i) => padL + (n === 1 ? innerW / 2 : (innerW * i) / (n - 1));
-  const yAt = (v) => padT + innerH - ((v - min) / span) * innerH;
+def get_chart(market, code, force_refresh=False):
+    key = f"{market}:{code}"
+    with _chart_cache_lock:
+        cached = _chart_cache.get(key)
+        is_stale = cached is None or (time.time() - cached[0]) > CHART_CACHE_TTL_SECONDS
 
-  const spacing = n > 1 ? innerW / (n - 1) : innerW;
-  const bodyW = Math.max(1, Math.min(6, spacing * 0.64));
-  const axisFont = `font-family="'JetBrains Mono',monospace" font-size="9.5" fill="var(--ink-soft)"`;
+    if not is_stale and not force_refresh:
+        return cached[1]
 
-  // 오른쪽 가격축 (가로 점선 + 가격 라벨)
-  let gridSvg = '';
-  const priceTicks = 4;
-  for (let i = 0; i <= priceTicks; i++) {
-    const v = min + (span * i) / priceTicks;
-    const y = yAt(v);
-    gridSvg += `<line x1="${padL}" y1="${y.toFixed(1)}" x2="${(W - padR).toFixed(1)}" y2="${y.toFixed(1)}" stroke="var(--line)" stroke-width="0.5" stroke-dasharray="2 3"/>`;
-    gridSvg += `<text ${axisFont} x="${(W - padR + 6).toFixed(1)}" y="${y.toFixed(1)}" dominant-baseline="middle">${fmtChartPrice(v, market)}</text>`;
-  }
+    try:
+        points = _fetch_kr_chart(code) if market == "kr" else _fetch_us_chart(code)
+    except Exception as e:
+        logger.warning("차트 조회 실패(%s), 기존 캐시 유지: %s", key, e)
+        with _chart_cache_lock:
+            cached = _chart_cache.get(key)
+        if cached is not None:
+            return cached[1]
+        raise
 
-  // 아래 날짜축 (5개 지점만 표시)
-  let dateSvg = '';
-  const idxSet = new Set([0, Math.round((n - 1) * 0.25), Math.round((n - 1) * 0.5), Math.round((n - 1) * 0.75), n - 1]);
-  idxSet.forEach((i) => {
-    const x = xAt(i);
-    const anchor = i === 0 ? 'start' : (i === n - 1 ? 'end' : 'middle');
-    dateSvg += `<text ${axisFont} x="${x.toFixed(1)}" y="${H - 6}" text-anchor="${anchor}">${fmtChartDate(points[i].date)}</text>`;
-  });
+    if not points:
+        raise ValueError("차트 데이터가 비어있습니다 (응답 포맷이 바뀌었을 수 있음)")
 
-  // 캔들(고가-저가 심지 + 시가-종가 몸통)
-  let candleSvg = '';
-  points.forEach((p, i) => {
-    const x = xAt(i);
-    const o = p.open ?? p.close, h = p.high ?? p.close, l = p.low ?? p.close, c = p.close;
-    const color = c >= o ? 'var(--positive)' : 'var(--stamp)';
-    const yHigh = yAt(h), yLow = yAt(l);
-    const yOpen = yAt(o), yClose = yAt(c);
-    const bodyTop = Math.min(yOpen, yClose);
-    const bodyH = Math.max(1, Math.abs(yClose - yOpen));
-    candleSvg += `<line x1="${x.toFixed(1)}" y1="${yHigh.toFixed(1)}" x2="${x.toFixed(1)}" y2="${yLow.toFixed(1)}" stroke="${color}" stroke-width="1"/>`;
-    candleSvg += `<rect x="${(x - bodyW / 2).toFixed(1)}" y="${bodyTop.toFixed(1)}" width="${bodyW.toFixed(1)}" height="${bodyH.toFixed(1)}" fill="${color}"/>`;
-  });
+    with _chart_cache_lock:
+        _chart_cache[key] = (time.time(), points)
+    return points
 
-  return `
-    <svg viewBox="0 0 ${W} ${H}" width="100%" height="${H}" preserveAspectRatio="none" style="display:block;">
-      ${gridSvg}
-      ${candleSvg}
-      ${dateSvg}
-    </svg>`;
-}
 
-function renderChartLoading(chartWrap) {
-  chartWrap.innerHTML = `<div class="chart-loading">📈 차트 불러오는 중…</div>`;
-}
+@etf_bp.route("/api/chart/<code>")
+def chart_ticker(code):
+    code = (code or "").strip()
+    if re.fullmatch(r"\d{6}", code):
+        market = "kr"
+    elif re.fullmatch(r"[A-Za-z.]{1,6}", code):
+        market = "us"
+        code = code.upper()
+    else:
+        return jsonify({"error": "지원하지 않는 티커 형식입니다 (국내 6자리 코드 또는 영문 1~6자 티커만 지원)"}), 400
 
-function renderChart(chartWrap, market, points, error) {
-  if (error) {
-    chartWrap.innerHTML = `<div class="quote-card quote-error">차트 조회 실패: ${error.message} (판정 결과에는 영향 없음)</div>`;
-    return;
-  }
-  if (!points || points.length < 2) {
-    chartWrap.innerHTML = '';
-    return;
-  }
-  const closes = points.map(p => p.close);
-  const first = closes[0];
-  const last = closes[closes.length - 1];
-  const pct = first ? ((last - first) / first) * 100 : 0;
-  const up = pct >= 0;
+    try:
+        points = get_chart(market, code)
+    except Exception as e:
+        # 프론트엔드가 "차트 조회 실패: " 접두어를 붙이므로 여기서는 원인만 반환 (중복 방지)
+        return jsonify({"error": str(e)}), 502
 
-  chartWrap.innerHTML = `
-    <div class="chart-card">
-      <div class="chart-head">
-        <span class="chart-title">최근 ${points.length}거래일 (일봉)</span>
-        <span class="chart-pct ${up ? 'pos' : 'neg'}">${up ? '+' : ''}${pct.toFixed(1)}%</span>
-      </div>
-      <div class="chart-svg-wrap">${buildCandleChartSvg(points, market)}</div>
-    </div>`;
-}
+    return jsonify({"code": code, "market": market, "points": points})
 
-const CATEGORY_INFO = {
-  domestic: {
-    label: "국내 개별주식 / 국내주식형 ETF",
-    isaEligible: true,
-    capGainType: "exempt",
-  },
-  overseas_etf: {
-    label: "국내상장 해외지수·채권·파생형 ETF",
-    isaEligible: true,
-    capGainType: "divTax",
-  },
-  us_direct: {
-    label: "미국 직접 상장 (해외주식 직접투자)",
-    isaEligible: false,
-    capGainType: "capGains",
-  },
-};
 
-const WON = (n) => n.toLocaleString('ko-KR') + '원';
-const FIN_DEMINIMIS = 10_000_000;      // 이자+배당 1천만원 이하는 건보료 산정에서 제외
-const COMP_TAX_LIMIT = 20_000_000;     // 금융소득종합과세 / 피부양자 소득요건 2천만원
-const WORKER_DEDUCT_NOW = 20_000_000;  // 직장가입자 소득월액 공제(현재)
-const WORKER_DEDUCT_PROPOSED = 10_000_000; // 2026.07 개편 검토안(미확정)
-const ISA_TAXFREE_GENERAL = 2_000_000;
-const ISA_RATE = 0.099;
-const DIV_TAX_RATE = 0.154;
-const CAPGAIN_RATE = 0.22;
-const CAPGAIN_DEDUCT = 2_500_000;
+@etf_bp.route("/api/chart/_debug/<code>")
+def chart_debug(code):
+    """티커 하나에 대해 각 소스가 개별로 성공했는지, 몇 개 포인트가 왔는지 확인용.
+    국내 6자리 코드면 네이버 fchart만, 그 외(영문 티커)면 야후/stooq를 각각 테스트."""
+    code = (code or "").strip()
+    out = {"code": code}
+    if re.fullmatch(r"\d{6}", code):
+        try:
+            pts = _fetch_kr_chart(code)
+            out["naver_fchart"] = {"ok": True, "count": len(pts), "last": pts[-1] if pts else None}
+        except Exception as e:
+            out["naver_fchart"] = {"ok": False, "error": str(e)}
+        return jsonify(out)
 
-function detectTicker(raw) {
-  const v = (raw || '').trim();
-  if (!v) return null;
-  if (/^\d{6}$/.test(v)) {
-    // 국내 6자리 코드는 형태만 확인 — 실제 분류는 classifyKoreanTicker()가 서버에 물어봄
-    return { code: v, category: null, name: null, known: false, isKorean: true };
-  }
-  if (/^[A-Za-z.]{1,6}$/.test(v)) {
-    return { code: v.toUpperCase(), category: 'us_direct', name: v.toUpperCase() + ' (미국 직접 상장)', known: true, isKorean: false };
-  }
-  return { code: v, category: null, name: null, known: false, isKorean: null };
-}
+    code = code.upper()
+    out["code"] = code
+    try:
+        pts = _fetch_us_chart_yahoo(code)
+        out["yahoo"] = {"ok": True, "count": len(pts), "last": pts[-1] if pts else None}
+    except Exception as e:
+        out["yahoo"] = {"ok": False, "error": str(e)}
+    try:
+        pts = _fetch_us_chart_stooq(code)
+        out["stooq"] = {"ok": True, "count": len(pts), "last": pts[-1] if pts else None}
+    except Exception as e:
+        out["stooq"] = {"ok": False, "error": str(e)}
+    return jsonify(out)
 
-function fmtCellAmount(label, amount) {
-  if (amount === null) return `<div class="cell-main">${label}</div>`;
-  return `<div class="cell-main">${label}</div><div class="cell-sub mono">${WON(Math.round(amount))}</div>`;
-}
 
-function computeVerdict(category, insurance, capGain, dist) {
-  const info = CATEGORY_INFO[category];
-  const hasAmounts = capGain !== null || dist !== null;
-  const cg = capGain || 0;
-  const ds = dist || 0;
+if __name__ == "__main__":
+    # 단독 실행: python etf_classifier.py 로 이 블루프린트만 테스트
+    from flask import Flask
 
-  // ---------------- 일반계좌 ----------------
-  let normalCapTax, normalCapNote;
-  if (info.capGainType === 'exempt') {
-    normalCapTax = { label: '비과세', sub: '증권거래세만 부담 (매매차익 자체엔 과세 없음)', amount: hasAmounts ? 0 : null };
-  } else if (info.capGainType === 'divTax') {
-    normalCapTax = { label: `배당소득세 ${(DIV_TAX_RATE*100).toFixed(1)}%`, sub: '보유기간과세 — 실제 매매차익과 과표기준가 증분 중 작은 금액 기준', amount: hasAmounts ? cg * DIV_TAX_RATE : null };
-  } else {
-    const taxable = Math.max(0, cg - CAPGAIN_DEDUCT);
-    normalCapTax = { label: `양도소득세 ${(CAPGAIN_RATE*100).toFixed(0)}%`, sub: `분류과세(종합소득 아님) · 기본공제 ${WON(CAPGAIN_DEDUCT)} 차감 후 세율 적용, 매년 5월 별도 신고`, amount: hasAmounts ? taxable * CAPGAIN_RATE : null };
-  }
-  const normalDistTax = { label: `배당소득세 ${(DIV_TAX_RATE*100).toFixed(1)}%`, sub: category === 'us_direct' ? '미국 원천 15% + 국내 조정분 0.4%p (외국납부세액공제)' : '원천징수로 일단 종결', amount: hasAmounts ? ds * DIV_TAX_RATE : null };
-
-  // 건보료/신고 대상 소득 = 분배금 + (해외직접이 아니면 매매차익도 포함, 해외직접의 매매차익은 양도소득이라 별도 취급)
-  const finIncome = ds + (category === 'us_direct' ? 0 : cg);
-  const overThreshold = hasAmounts ? finIncome > COMP_TAX_LIMIT : null;
-
-  let insReport;
-  if (insurance === 'local') {
-    const included = hasAmounts ? (finIncome > FIN_DEMINIMIS ? finIncome : 0) : null;
-    insReport = {
-      label: hasAmounts ? (included > 0 ? '건보료 산정에 포함됨' : '건보료 산정 제외') : '금액 입력 시 판정',
-      sub: `지역가입자는 별도 면제구간이 없어 이자+배당 합계가 ${WON(FIN_DEMINIMIS)} 초과 시 전액이 매년 보험료 재산정에 반영됩니다 (이하면 아예 제외).`,
-      tag: hasAmounts ? (included > 0 ? 'warn' : 'pos') : 'neu',
-    };
-  } else if (insurance === 'worker') {
-    insReport = {
-      label: hasAmounts
-        ? (finIncome > FIN_DEMINIMIS && finIncome > WORKER_DEDUCT_NOW ? '소득월액보험료 추가 부과 대상' : '현재 기준으론 영향 없음')
-        : '금액 입력 시 판정',
-      sub: `이자+배당 ${WON(FIN_DEMINIMIS)} 이하는 계산에서 제외. 보수외소득이 연 ${WON(WORKER_DEDUCT_NOW)} 초과 시 추가 부과 (현재 기준). <span class="flag">⚠ 2026년 7월 이 공제기준을 ${WON(WORKER_DEDUCT_PROPOSED)}로 낮추는 개편이 검토 중 — 아직 미확정.</span>`,
-      tag: hasAmounts ? (finIncome > WORKER_DEDUCT_NOW ? 'warn' : 'pos') : 'neu',
-    };
-  } else {
-    insReport = {
-      label: hasAmounts ? (overThreshold ? '피부양자 자격 상실 가능성' : '소득요건상 자격 유지') : '금액 입력 시 판정',
-      sub: `연간 관련 소득 합계가 ${WON(COMP_TAX_LIMIT)} 초과하면 피부양자 자격을 잃고 지역가입자로 전환됩니다. 재산(건물·토지 등) 요건은 별도 심사이니 함께 확인하세요.`,
-      tag: hasAmounts ? (overThreshold ? 'warn' : 'pos') : 'neu',
-    };
-  }
-
-  let reportTarget;
-  if (category === 'us_direct') {
-    reportTarget = {
-      label: hasAmounts && cg > CAPGAIN_DEDUCT ? '양도소득세 신고 대상' : '매매차익 신고는 이익 있으면 원칙상 필요',
-      sub: `매매차익은 매년 5월 양도소득세로 별도 신고(증권사 대행 가능, 금융소득종합과세와 무관). 배당은 ${WON(COMP_TAX_LIMIT)} 초과 시(다른 이자·배당 합산) 금융소득종합과세로 별도 신고.`,
-      tag: 'neu',
-    };
-  } else {
-    reportTarget = {
-      label: hasAmounts ? (overThreshold ? '금융소득종합과세 신고 대상' : '신고 불필요 (원천징수 종결)') : '금액 입력 시 판정',
-      sub: `연간 금융소득(이자+배당, 매매차익 포함) 합계가 ${WON(COMP_TAX_LIMIT)} 초과 시 다른 종합소득과 합산되어 누진세율로 재계산됩니다.`,
-      tag: hasAmounts ? (overThreshold ? 'warn' : 'pos') : 'neu',
-    };
-  }
-
-  // ---------------- ISA 계좌 ----------------
-  let isaCapTax, isaDistTax, isaIns, isaReport;
-  if (!info.isaEligible) {
-    isaCapTax = isaDistTax = isaIns = isaReport = null; // N/A
-  } else {
-    const netProfit = cg + ds;
-    const taxableIsa = hasAmounts ? Math.max(0, netProfit - ISA_TAXFREE_GENERAL) : null;
-    const isaTax = hasAmounts ? taxableIsa * ISA_RATE : null;
-    isaCapTax = { label: hasAmounts ? '계좌 내 손익 통산' : `${WON(ISA_TAXFREE_GENERAL)}(일반형)까지 비과세`, sub: '매매차익·분배금을 합산해 아래 한 줄로 과세', amount: null, mergedNote: true };
-    isaDistTax = { label: hasAmounts ? `초과분 ${(ISA_RATE*100).toFixed(1)}% 분리과세` : `${WON(ISA_TAXFREE_GENERAL)} 초과분만 ${(ISA_RATE*100).toFixed(1)}%`, sub: `서민·농어민형은 비과세 한도 ${WON(4_000_000)}. 초과분은 9.9% 분리과세로 완전히 종결.`, amount: isaTax };
-    isaIns = { label: '건보료 산정 제외', sub: '비과세·분리과세 처리되어 금액과 무관하게 건강보험료 산정 소득에 포함되지 않습니다.', tag: 'pos' };
-    isaReport = { label: '신고 대상 아님', sub: '금액과 무관하게 금융소득종합과세 대상에서 제외됩니다.', tag: 'pos' };
-  }
-
-  return { normalCapTax, normalDistTax, insReport, reportTarget, isaCapTax, isaDistTax, isaIns, isaReport, isaEligible: info.isaEligible, netProfit: cg + ds, hasAmounts };
-}
-
-// 빠른 타이핑 중 여러 요청이 겹쳐도, 마지막 입력에 대한 응답만 반영하기 위한 토큰
-let renderToken = 0;
-let debounceTimer = null;
-
-function scheduleRender() {
-  clearTimeout(debounceTimer);
-  debounceTimer = setTimeout(renderAsync, 350);
-}
-
-async function renderAsync() {
-  const myToken = ++renderToken;
-  const raw = document.getElementById('tickerInput').value;
-  const shape = detectTicker(raw);
-  const detectArea = document.getElementById('detectArea');
-  const quoteWrap = document.getElementById('quoteWrap');
-  const chartWrap = document.getElementById('chartWrap');
-  const verdictWrap = document.getElementById('verdictWrap');
-  const footnoteList = document.getElementById('footnoteList');
-  document.getElementById('docNo').textContent = 'TCK-' + (raw ? raw.toUpperCase().replace(/[^A-Z0-9]/g,'').padEnd(6,'0').slice(0,6) : '000000');
-
-  if (!shape) {
-    detectArea.innerHTML = '';
-    quoteWrap.innerHTML = '';
-    chartWrap.innerHTML = '';
-    verdictWrap.innerHTML = '<div class="empty-state">종목코드나 티커를 입력하면 판정 결과가 여기에 표시됩니다. (예: 458730, SCHD, TQQQ, 005930)</div>';
-    footnoteList.innerHTML = '';
-    return;
-  }
-
-  if (!shape.isKorean) {
-    // 미국 티커는 분류 자체는 서버 조회 없이 바로 판정하지만,
-    // 차트는 stooq.com을 프록시하는 서버 엔드포인트에서 받아온다.
-    quoteWrap.innerHTML = '';
-    renderChartLoading(chartWrap);
-    renderDetected(shape, detectArea, verdictWrap, footnoteList);
-    fetchChartData(shape.code)
-      .then((data) => {
-        if (myToken !== renderToken) return;
-        renderChart(chartWrap, data.market, data.points, null);
-      })
-      .catch((err) => {
-        if (myToken !== renderToken) return;
-        renderChart(chartWrap, 'us', null, err);
-      });
-    return;
-  }
-
-  // 국내 6자리 코드 → 서버에 "분류" · "시세/배당" · "차트" 동시 조회
-  detectArea.innerHTML = `<div class="detect-chip">🔎 종목 정보 조회 중…</div>`;
-  quoteWrap.innerHTML = '';
-  renderChartLoading(chartWrap);
-  const [classifyResult, quoteResult, chartResult] = await Promise.allSettled([
-    classifyKoreanTicker(shape.code),
-    fetchKoreanQuote(shape.code),
-    fetchChartData(shape.code),
-  ]);
-  if (myToken !== renderToken) return; // 그 사이 입력이 바뀜 → 이 응답은 버림
-
-  if (classifyResult.status === 'rejected') {
-    detectArea.innerHTML = `<div class="detect-chip unknown">⚠ 서버 조회 실패 (${classifyResult.reason.message}) — 아래에서 유형을 직접 선택해주세요</div>`;
-    chartWrap.innerHTML = '';
-    renderManualOverride(shape, detectArea, verdictWrap, footnoteList);
-    return;
-  }
-
-  const info = classifyResult.value;
-  const detected = {
-    code: shape.code,
-    category: info.category,
-    name: info.name || `${shape.code} (개별종목으로 간주)`,
-    isKorean: true,
-    isEtf: info.isEtf,
-  };
-
-  if (quoteResult.status === 'fulfilled') {
-    renderQuote(quoteWrap, detected.name, quoteResult.value, null);
-  } else {
-    renderQuote(quoteWrap, detected.name, null, quoteResult.reason);
-  }
-
-  if (chartResult.status === 'fulfilled') {
-    renderChart(chartWrap, chartResult.value.market, chartResult.value.points, null);
-  } else {
-    renderChart(chartWrap, 'kr', null, chartResult.reason);
-  }
-
-  renderDetected(detected, detectArea, verdictWrap, footnoteList);
-}
-
-function renderDetected(detected, detectArea, verdictWrap, footnoteList) {
-  const category = detected.category;
-  if (detected.isKorean) {
-    const sourceNote = detected.isEtf ? 'ETF 목록 매칭' : 'ETF 목록에 없어 개별종목으로 간주';
-    detectArea.innerHTML = `<div class="detect-chip">🇰🇷 자동인식: <b>${detected.name}</b> — ${CATEGORY_INFO[category].label}<div class="hint">(${sourceNote})</div></div>`;
-  } else {
-    detectArea.innerHTML = `<div class="detect-chip">🇺🇸 자동인식: <b>${detected.name}</b> — ${CATEGORY_INFO[category].label}</div>`;
-  }
-  renderVerdict(category, verdictWrap, footnoteList);
-}
-
-function renderManualOverride(shape, detectArea, verdictWrap, footnoteList) {
-  const overrideHtml = `
-    <div class="override-row">
-      <select id="manualCat">
-        <option value="">-- 유형 선택 --</option>
-        <option value="domestic">국내 개별주식 / 국내주식형 ETF (매매차익 비과세)</option>
-        <option value="overseas_etf">국내상장 해외지수·채권·파생형 ETF (매매차익도 배당소득세)</option>
-      </select>
-    </div>`;
-  detectArea.innerHTML += overrideHtml;
-  const savedManual = detectArea.dataset.manual;
-  const sel = document.getElementById('manualCat');
-  if (savedManual) sel.value = savedManual;
-  sel.addEventListener('change', () => { detectArea.dataset.manual = sel.value; renderAsync(); });
-  const category = savedManual || null;
-  if (!category) {
-    verdictWrap.innerHTML = '<div class="empty-state">유형을 선택하면 판정 결과가 표시됩니다.</div>';
-    footnoteList.innerHTML = '';
-    return;
-  }
-  renderVerdict(category, verdictWrap, footnoteList);
-}
-
-function renderVerdict(category, verdictWrap, footnoteList) {
-  const insurance = document.getElementById('insuranceSelect').value;
-  const capGainRaw = document.getElementById('capGainInput').value;
-  const distRaw = document.getElementById('distInput').value;
-  const capGain = capGainRaw === '' ? null : Math.max(0, parseFloat(capGainRaw) || 0);
-  const dist = distRaw === '' ? null : Math.max(0, parseFloat(distRaw) || 0);
-
-  const v = computeVerdict(category, insurance, capGain, dist);
-
-  const stampText = !v.isaEligible ? 'ISA<br>가입불가' : (v.hasAmounts && v.netProfit > ISA_TAXFREE_GENERAL ? '분리과세<br>9.9%' : '참고용<br>확인서');
-
-  const isaCell = (cell, na) => {
-    if (na) return `<td class="isa-na">해당 종목은 국내 상장이 아니라<br>ISA에 직접 편입할 수 없습니다</td>`;
-    return `<td>${fmtCellAmount(cell.label, cell.amount)}<div class="cell-sub">${cell.sub}</div></td>`;
-  };
-  const tagCell = (cell, na) => {
-    if (na) return `<td class="isa-na">—</td>`;
-    return `<td><span class="tag ${cell.tag}">${cell.label}</span><div class="cell-sub">${cell.sub}</div></td>`;
-  };
-
-  verdictWrap.innerHTML = `
-    <div class="stamp">${stampText}</div>
-    <div class="verdict-head"><h2>판정 결과</h2><span>${insurance === 'local' ? '지역가입자' : insurance === 'worker' ? '직장가입자' : '피부양자'} 기준</span></div>
-    <table>
-      <thead><tr><th></th><th>일반계좌</th><th>ISA 계좌</th></tr></thead>
-      <tbody>
-        <tr><th>매매차익 세금</th><td>${fmtCellAmount(v.normalCapTax.label, v.normalCapTax.amount)}<div class="cell-sub">${v.normalCapTax.sub}</div></td>${isaCell(v.isaCapTax, !v.isaEligible)}</tr>
-        <tr><th>분배금 세금</th><td>${fmtCellAmount(v.normalDistTax.label, v.normalDistTax.amount)}<div class="cell-sub">${v.normalDistTax.sub}</div></td>${isaCell(v.isaDistTax, !v.isaEligible)}</tr>
-        <tr><th>건강보험료 산정</th>${tagCell(v.insReport, false)}${tagCell(v.isaIns, !v.isaEligible)}</tr>
-        <tr><th>종합소득신고</th>${tagCell(v.reportTarget, false)}${tagCell(v.isaReport, !v.isaEligible)}</tr>
-      </tbody>
-    </table>
-  `;
-
-  footnoteList.innerHTML = `
-    <li>이 확인서는 2026년 8월 기준 일반적인 세법/건강보험료 규정을 정리한 <b>참고용</b> 계산기이며, 국세청·국민건강보험공단이 발급한 문서가 아닙니다. 개인별 다른 소득·공제 상황에 따라 실제 결과는 달라질 수 있습니다.</li>
-    <li><span class="flag">⚠ 2026년 7월 보건복지부가 직장가입자 소득월액보험료 공제기준(현행 2,000만원)을 1,000만원으로 낮추는 방안을 검토 중이라고 보고했습니다. 아직 확정된 사항이 아니므로, 시행 여부와 시점을 반드시 다시 확인하세요.</span></li>
-    <li>이자·배당소득 합계가 연 1,000만원 이하면 건강보험료 산정에서 아예 제외되고, 초과하면 전액이 반영됩니다 (일부만 반영되는 게 아니라 기준선 자체가 있는 방식).</li>
-    <li>피부양자의 재산(건물·토지 등) 요건은 소득과 별개로 심사되므로, 소득 기준을 통과해도 재산 과세표준이 일정 금액을 넘으면 별도로 자격을 잃을 수 있습니다.</li>
-    <li>미국 직접 상장 종목의 매매차익(양도소득)은 애초에 건강보험료 산정 및 금융소득종합과세 대상에 포함되지 않지만, 별도로 매년 5월 양도소득세 신고 대상입니다.</li>
-    <li>국내 6자리 코드 중 ETF 목록에 없는 코드는 개별주식으로 간주해 자동 판정합니다 — 실제로 존재하지 않는 코드를 입력해도 이렇게 표시될 수 있으니 종목명이 맞는지 확인하세요.</li>
-  `;
-}
-
-document.getElementById('tickerInput').addEventListener('input', scheduleRender);
-document.getElementById('insuranceSelect').addEventListener('change', renderAsync);
-document.getElementById('capGainInput').addEventListener('input', renderAsync);
-document.getElementById('distInput').addEventListener('input', renderAsync);
-document.getElementById('amountsToggleBtn').addEventListener('click', () => {
-  const box = document.getElementById('amountsBox');
-  const btn = document.getElementById('amountsToggleBtn');
-  box.classList.toggle('open');
-  btn.textContent = box.classList.contains('open') ? '− 금액 입력 닫기' : '+ 연간 매매차익 · 분배금 금액 입력해서 실제 원화로 계산하기 (선택)';
-});
-
-renderAsync();
-</script>
-</body>
-</html>
+    logging.basicConfig(level=logging.INFO)
+    app = Flask(__name__)
+    app.register_blueprint(etf_bp)
+    print("테스트: http://127.0.0.1:5001/api/classify-ticker/_debug")
+    print("테스트: http://127.0.0.1:5001/api/classify-ticker/458730")
+    print("테스트: http://127.0.0.1:5001/api/quote/458730")
+    print("테스트: http://127.0.0.1:5001/api/chart/458730")
+    print("테스트: http://127.0.0.1:5001/api/chart/AAPL")
+    print("디버그(해외 티커 소스별 확인): http://127.0.0.1:5001/api/chart/_debug/IREN")
+    app.run(port=5001, debug=True)
