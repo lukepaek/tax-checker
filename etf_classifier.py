@@ -193,6 +193,13 @@ REALTIME_QUOTE_URL = "https://polling.finance.naver.com/api/realtime/domestic/st
 INTEGRATION_URL = "https://m.stock.naver.com/api/stock/{code}/integration"
 QUOTE_CACHE_TTL_SECONDS = 30
 
+# m.stock.naver.com(모바일 API)은 finance.naver.com용 Referer를 그대로 보내면
+# 도메인이 안 맞아 이상한 요청으로 보고 409로 막는 경우가 있어 별도 헤더를 씀
+_MOBILE_HEADERS = {
+    "User-Agent": _HEADERS["User-Agent"],
+    "Referer": "https://m.stock.naver.com/",
+}
+
 # 종목코드 → 연환산 배당수익률(분배율) %. 자주 보는 ETF만 채워두고 가끔 업데이트하세요.
 MANUAL_DIVIDEND_YIELD = {
     # "458730": 3.8,  # TIGER 미국배당다우존스 — 예시. 실제 값으로 바꿔서 쓰세요.
@@ -204,15 +211,25 @@ _quote_cache = {}  # code -> (fetched_at, data)
 
 
 def _fetch_quote(code):
+    # 1) 현재가/등락률 (필수) — 이게 실패하면 시세 카드 전체를 못 그리므로 그대로 예외를 던짐
     r1 = requests.get(REALTIME_QUOTE_URL.format(code=code), headers=_HEADERS, timeout=REQUEST_TIMEOUT)
     r1.raise_for_status()
     datas = r1.json().get("datas") or []
     price_info = datas[0] if datas else {}
 
-    r2 = requests.get(INTEGRATION_URL.format(code=code), headers=_HEADERS, timeout=REQUEST_TIMEOUT)
-    r2.raise_for_status()
-    total_infos = r2.json().get("totalInfos") or []
-    info_map = {row.get("code"): row.get("value") for row in total_infos}
+    # 2) 배당수익률 등 부가 정보 (선택) — 여기서 실패해도 위에서 받은 현재가는 그대로 살려서 반환.
+    #    (예: m.stock.naver.com이 일시적으로 409/404를 주는 경우가 있음 — 코드가 존재하지
+    #    않거나 통합 정보가 없는 종목일 수 있으니 부가 정보만 비워두고 넘어감)
+    info_map = {}
+    try:
+        r2 = requests.get(
+            INTEGRATION_URL.format(code=code), headers=_MOBILE_HEADERS, timeout=REQUEST_TIMEOUT
+        )
+        r2.raise_for_status()
+        total_infos = r2.json().get("totalInfos") or []
+        info_map = {row.get("code"): row.get("value") for row in total_infos}
+    except Exception as e:
+        logger.warning("배당/통합정보 조회 실패(%s) — 현재가만 표시: %s", code, e)
 
     # 수동 등록값이 있으면 그게 우선 (ETF는 API에 값이 없는 경우가 대부분이라)
     manual_yield = MANUAL_DIVIDEND_YIELD.get(code)
@@ -281,7 +298,7 @@ KR_CHART_URL = "https://fchart.stock.naver.com/sise.nhn"
 YAHOO_CHART_URL_TMPL = "https://query1.finance.yahoo.com/v8/finance/chart/{ticker}"
 STOOQ_CHART_URL_TMPL = "https://stooq.com/q/d/l/?s={ticker}.us&i=d"
 CHART_CACHE_TTL_SECONDS = 10 * 60
-CHART_POINT_COUNT = 90  # 대략 최근 4~5개월치 거래일
+CHART_POINT_COUNT = 365  # 최근 1년(일봉)
 
 _US_HEADERS = {
     "User-Agent": (
@@ -295,11 +312,29 @@ _chart_cache_lock = threading.Lock()
 _chart_cache = {}  # "kr:005930" / "us:AAPL" -> (fetched_at, points)
 
 
+def _decode_kr_xml(resp):
+    """네이버 fchart는 EUC-KR로 응답하는 경우가 있는데, 파이썬 expat 파서는
+    멀티바이트 인코딩이 선언된 XML을 바이트째로 넘기면 못 읽는다
+    ("multi-byte encodings are not supported"). 그래서 직접 디코딩한 뒤
+    <?xml ... encoding="..."?> 선언부를 떼고 유니코드 문자열로 파싱한다."""
+    raw = resp.content
+    text = None
+    for enc in ("euc-kr", "utf-8", "cp949"):
+        try:
+            text = raw.decode(enc)
+            break
+        except UnicodeDecodeError:
+            continue
+    if text is None:
+        text = raw.decode("utf-8", errors="replace")
+    return re.sub(r"^\s*<\?xml[^>]*\?>", "", text, count=1)
+
+
 def _fetch_kr_chart(code, count=CHART_POINT_COUNT):
     params = {"symbol": code, "timeframe": "day", "count": str(count), "requestType": "0"}
     resp = requests.get(KR_CHART_URL, params=params, headers=_HEADERS, timeout=REQUEST_TIMEOUT)
     resp.raise_for_status()
-    root = ET.fromstring(resp.content)
+    root = ET.fromstring(_decode_kr_xml(resp))
     points = []
     for item in root.findall(".//item"):
         raw = item.get("data")
@@ -308,19 +343,22 @@ def _fetch_kr_chart(code, count=CHART_POINT_COUNT):
         parts = raw.split("|")
         if len(parts) < 5:
             continue
-        date_s, close_s = parts[0], parts[4]
+        date_s, open_s, high_s, low_s, close_s = parts[0], parts[1], parts[2], parts[3], parts[4]
         try:
-            close = float(close_s)
+            o, h, l, c = float(open_s), float(high_s), float(low_s), float(close_s)
         except (TypeError, ValueError):
             continue
-        if not date_s or len(date_s) != 8 or close <= 0:
+        if not date_s or len(date_s) != 8 or c <= 0:
             continue
-        points.append({"date": f"{date_s[0:4]}-{date_s[4:6]}-{date_s[6:8]}", "close": close})
+        points.append({
+            "date": f"{date_s[0:4]}-{date_s[4:6]}-{date_s[6:8]}",
+            "open": o, "high": h, "low": l, "close": c,
+        })
     return points
 
 
 def _fetch_us_chart_yahoo(ticker, count=CHART_POINT_COUNT):
-    params = {"range": "6mo", "interval": "1d"}
+    params = {"range": "1y", "interval": "1d"}
     resp = requests.get(
         YAHOO_CHART_URL_TMPL.format(ticker=ticker),
         params=params,
@@ -337,14 +375,21 @@ def _fetch_us_chart_yahoo(ticker, count=CHART_POINT_COUNT):
     node = results[0]
     timestamps = node.get("timestamp") or []
     quote = (((node.get("indicators") or {}).get("quote")) or [{}])[0]
+    opens = quote.get("open") or []
+    highs = quote.get("high") or []
+    lows = quote.get("low") or []
     closes = quote.get("close") or []
 
     points = []
-    for ts, close in zip(timestamps, closes):
-        if close is None:
+    for i, ts in enumerate(timestamps):
+        c = closes[i] if i < len(closes) else None
+        if c is None:
             continue
+        o = opens[i] if i < len(opens) and opens[i] is not None else c
+        h = highs[i] if i < len(highs) and highs[i] is not None else c
+        l = lows[i] if i < len(lows) and lows[i] is not None else c
         date_s = datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%d")
-        points.append({"date": date_s, "close": float(close)})
+        points.append({"date": date_s, "open": float(o), "high": float(h), "low": float(l), "close": float(c)})
     return points[-count:]
 
 
@@ -358,14 +403,14 @@ def _fetch_us_chart_stooq(ticker, count=CHART_POINT_COUNT):
         cols = line.split(",")
         if len(cols) < 5:
             continue
-        date_s, close_s = cols[0], cols[4]
+        date_s, open_s, high_s, low_s, close_s = cols[0], cols[1], cols[2], cols[3], cols[4]
         try:
-            close = float(close_s)
+            o, h, l, c = float(open_s), float(high_s), float(low_s), float(close_s)
         except (TypeError, ValueError):
             continue
-        if close <= 0:
+        if c <= 0:
             continue
-        points.append({"date": date_s, "close": close})
+        points.append({"date": date_s, "open": o, "high": h, "low": l, "close": c})
     return points[-count:]
 
 
@@ -432,9 +477,20 @@ def chart_ticker(code):
 
 @etf_bp.route("/api/chart/_debug/<code>")
 def chart_debug(code):
-    """해외 티커 하나에 대해 야후/stooq 각각 성공했는지, 몇 개 포인트가 왔는지 개별 확인용."""
-    code = (code or "").strip().upper()
+    """티커 하나에 대해 각 소스가 개별로 성공했는지, 몇 개 포인트가 왔는지 확인용.
+    국내 6자리 코드면 네이버 fchart만, 그 외(영문 티커)면 야후/stooq를 각각 테스트."""
+    code = (code or "").strip()
     out = {"code": code}
+    if re.fullmatch(r"\d{6}", code):
+        try:
+            pts = _fetch_kr_chart(code)
+            out["naver_fchart"] = {"ok": True, "count": len(pts), "last": pts[-1] if pts else None}
+        except Exception as e:
+            out["naver_fchart"] = {"ok": False, "error": str(e)}
+        return jsonify(out)
+
+    code = code.upper()
+    out["code"] = code
     try:
         pts = _fetch_us_chart_yahoo(code)
         out["yahoo"] = {"ok": True, "count": len(pts), "last": pts[-1] if pts else None}
