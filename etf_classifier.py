@@ -20,6 +20,7 @@ import time
 import threading
 import logging
 import xml.etree.ElementTree as ET
+from datetime import datetime, timezone
 
 import requests
 from flask import Blueprint, jsonify
@@ -263,17 +264,32 @@ def quote_ticker(code):
 # - 국내 6자리 코드: 네이버 fchart 비공식 XML API (일봉)
 #     https://fchart.stock.naver.com/sise.nhn?symbol=CODE&timeframe=day&count=N&requestType=0
 #   응답이 XML이고 각 <item data="20260101|시가|고가|저가|종가|거래량|외국인비율"/> 형태.
-# - 해외(미국) 티커: stooq.com 무료 CSV 종가 API (키 불필요)
-#     https://stooq.com/q/d/l/?s={ticker}.us&i=d
-#   컬럼: Date,Open,High,Low,Close,Volume
 #
-# 둘 다 비공식/무료 소스라 스키마가 예고 없이 바뀔 수 있습니다.
+# - 해외(미국) 티커: 2단계 폴백
+#     1순위) 야후 파이낸스 비공식 차트 JSON API (가장 안정적, 대부분 티커 지원)
+#         https://query1.finance.yahoo.com/v8/finance/chart/{TICKER}?range=6mo&interval=1d
+#     2순위) stooq.com 무료 CSV 종가 API (야후가 막히거나 없는 티커일 때 폴백)
+#         https://stooq.com/q/d/l/?s={ticker}.us&i=d
+#   ⚠ 두 소스 모두 반드시 일반 브라우저 헤더를 써야 합니다 — 네이버용 Referer를
+#   그대로 보내면 야후/스투크가 이상한 요청으로 보고 빈 응답을 줄 수 있어서
+#   국내용 _HEADERS와는 별도로 _US_HEADERS를 씁니다.
+#
+# 전부 비공식/무료 소스라 스키마가 예고 없이 바뀔 수 있습니다.
 # 10분 캐싱 — 차트는 실시간까지는 필요 없어서 시세(30초)보다 길게 잡음.
 # ---------------------------------------------------------------------------
 KR_CHART_URL = "https://fchart.stock.naver.com/sise.nhn"
-US_CHART_URL_TMPL = "https://stooq.com/q/d/l/?s={ticker}.us&i=d"
+YAHOO_CHART_URL_TMPL = "https://query1.finance.yahoo.com/v8/finance/chart/{ticker}"
+STOOQ_CHART_URL_TMPL = "https://stooq.com/q/d/l/?s={ticker}.us&i=d"
 CHART_CACHE_TTL_SECONDS = 10 * 60
 CHART_POINT_COUNT = 90  # 대략 최근 4~5개월치 거래일
+
+_US_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+    ),
+    "Accept": "application/json, text/plain, */*",
+}
 
 _chart_cache_lock = threading.Lock()
 _chart_cache = {}  # "kr:005930" / "us:AAPL" -> (fetched_at, points)
@@ -303,9 +319,38 @@ def _fetch_kr_chart(code, count=CHART_POINT_COUNT):
     return points
 
 
-def _fetch_us_chart(ticker, count=CHART_POINT_COUNT):
-    url = US_CHART_URL_TMPL.format(ticker=ticker.lower())
-    resp = requests.get(url, headers=_HEADERS, timeout=REQUEST_TIMEOUT)
+def _fetch_us_chart_yahoo(ticker, count=CHART_POINT_COUNT):
+    params = {"range": "6mo", "interval": "1d"}
+    resp = requests.get(
+        YAHOO_CHART_URL_TMPL.format(ticker=ticker),
+        params=params,
+        headers=_US_HEADERS,
+        timeout=REQUEST_TIMEOUT,
+    )
+    resp.raise_for_status()
+    payload = resp.json()
+    results = ((payload.get("chart") or {}).get("result")) or []
+    if not results:
+        err = ((payload.get("chart") or {}).get("error")) or {}
+        raise ValueError(err.get("description") or "야후 파이낸스 응답에 데이터가 없습니다")
+
+    node = results[0]
+    timestamps = node.get("timestamp") or []
+    quote = (((node.get("indicators") or {}).get("quote")) or [{}])[0]
+    closes = quote.get("close") or []
+
+    points = []
+    for ts, close in zip(timestamps, closes):
+        if close is None:
+            continue
+        date_s = datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%d")
+        points.append({"date": date_s, "close": float(close)})
+    return points[-count:]
+
+
+def _fetch_us_chart_stooq(ticker, count=CHART_POINT_COUNT):
+    url = STOOQ_CHART_URL_TMPL.format(ticker=ticker.lower())
+    resp = requests.get(url, headers=_US_HEADERS, timeout=REQUEST_TIMEOUT)
     resp.raise_for_status()
     lines = resp.text.strip().splitlines()
     points = []
@@ -322,6 +367,20 @@ def _fetch_us_chart(ticker, count=CHART_POINT_COUNT):
             continue
         points.append({"date": date_s, "close": close})
     return points[-count:]
+
+
+def _fetch_us_chart(ticker, count=CHART_POINT_COUNT):
+    """야후를 먼저 시도하고, 실패하거나 빈 데이터면 stooq로 폴백."""
+    errors = []
+    for label, fetcher in (("야후", _fetch_us_chart_yahoo), ("stooq", _fetch_us_chart_stooq)):
+        try:
+            points = fetcher(ticker, count)
+            if points:
+                return points
+            errors.append(f"{label}: 데이터 없음")
+        except Exception as e:
+            errors.append(f"{label}: {e}")
+    raise ValueError(" / ".join(errors) if errors else "데이터를 가져오지 못했습니다")
 
 
 def get_chart(market, code, force_refresh=False):
@@ -365,9 +424,28 @@ def chart_ticker(code):
     try:
         points = get_chart(market, code)
     except Exception as e:
-        return jsonify({"error": f"차트 조회 실패: {e}"}), 502
+        # 프론트엔드가 "차트 조회 실패: " 접두어를 붙이므로 여기서는 원인만 반환 (중복 방지)
+        return jsonify({"error": str(e)}), 502
 
     return jsonify({"code": code, "market": market, "points": points})
+
+
+@etf_bp.route("/api/chart/_debug/<code>")
+def chart_debug(code):
+    """해외 티커 하나에 대해 야후/stooq 각각 성공했는지, 몇 개 포인트가 왔는지 개별 확인용."""
+    code = (code or "").strip().upper()
+    out = {"code": code}
+    try:
+        pts = _fetch_us_chart_yahoo(code)
+        out["yahoo"] = {"ok": True, "count": len(pts), "last": pts[-1] if pts else None}
+    except Exception as e:
+        out["yahoo"] = {"ok": False, "error": str(e)}
+    try:
+        pts = _fetch_us_chart_stooq(code)
+        out["stooq"] = {"ok": True, "count": len(pts), "last": pts[-1] if pts else None}
+    except Exception as e:
+        out["stooq"] = {"ok": False, "error": str(e)}
+    return jsonify(out)
 
 
 if __name__ == "__main__":
@@ -382,4 +460,5 @@ if __name__ == "__main__":
     print("테스트: http://127.0.0.1:5001/api/quote/458730")
     print("테스트: http://127.0.0.1:5001/api/chart/458730")
     print("테스트: http://127.0.0.1:5001/api/chart/AAPL")
+    print("디버그(해외 티커 소스별 확인): http://127.0.0.1:5001/api/chart/_debug/IREN")
     app.run(port=5001, debug=True)
