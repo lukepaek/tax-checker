@@ -178,6 +178,29 @@
   }
   .chart-minmax{font-family:'Pretendard Variable',sans-serif;}
   .chart-loading{font-size:0.76rem;color:var(--ink-soft);padding:10px 2px;}
+
+  .reco-wrap{padding:20px 34px 4px;}
+  .reco-title-row{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:10px;}
+  .reco-heading{font-size:0.78rem;font-weight:700;color:var(--navy);letter-spacing:0.02em;}
+  .reco-heading .sub{font-weight:400;color:var(--ink-soft);font-size:0.7rem;margin-left:6px;}
+  .reco-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;}
+  @media (max-width:640px){.reco-grid{grid-template-columns:1fr;}}
+  .reco-col-title{
+    font-size:0.72rem;font-weight:700;color:var(--navy);margin-bottom:6px;
+    display:flex;align-items:center;gap:5px;
+  }
+  .reco-table{width:100%;border-collapse:collapse;background:var(--paper-2);border:1px solid var(--line);border-radius:6px;overflow:hidden;}
+  .reco-table th{
+    text-align:left;font-size:0.66rem;font-weight:700;color:var(--ink-soft);
+    padding:6px 10px;border-bottom:1px solid var(--line);background:var(--navy-soft);
+  }
+  .reco-table td{padding:7px 10px;font-size:0.76rem;border-bottom:1px solid var(--line);}
+  .reco-table tr:last-child td{border-bottom:none;}
+  .reco-row{cursor:pointer;transition:background 0.12s;}
+  .reco-row:hover{background:var(--navy-soft);}
+  .reco-row .reco-code{font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--navy);}
+  .reco-row .reco-price,.reco-row .reco-yield{font-family:'JetBrains Mono',monospace;text-align:right;}
+  .reco-empty{font-size:0.74rem;color:var(--ink-soft);padding:8px 2px;}
 </style>
 </head>
 <body>
@@ -190,6 +213,8 @@
     </div>
     <div class="doc-no">문서번호 <b id="docNo">TCK-000000</b><br>기준일자 2026-08-16</div>
   </div>
+
+  <div class="reco-wrap" id="recoWrap"></div>
 
   <div class="form-section">
     <div class="field-row">
@@ -763,6 +788,80 @@ function renderVerdict(category, verdictWrap, footnoteList) {
   `;
 }
 
+// ------------------------------------------------------------------
+// 추천 ETF 패널 (01. 종목코드 위) — recommended-etfs.json을 읽어서 표로 보여줌.
+// 클릭하면 종목코드 입력창에 채워지고 바로 조회됨. 가격/분배율은 전부
+// JSON에 직접 적어둔 값을 그대로 표시(서버 조회 없음).
+// ------------------------------------------------------------------
+function recoRowHtml(item) {
+  const code = item.code || '';
+  const name = item.name || code;
+  const price = item.price || '-';
+  const dividendYield = item.yield || '-';
+  return `<tr class="reco-row" data-code="${code}">
+    <td class="reco-code">${code}</td>
+    <td>${name}</td>
+    <td class="reco-price">${price}</td>
+    <td class="reco-yield">${dividendYield}</td>
+  </tr>`;
+}
+
+function recoTableHtml(title, flagEmoji, items) {
+  if (!items || items.length === 0) {
+    return `<div><div class="reco-col-title">${flagEmoji} ${title}</div><div class="reco-empty">등록된 종목이 없습니다.</div></div>`;
+  }
+  return `
+    <div>
+      <div class="reco-col-title">${flagEmoji} ${title}</div>
+      <table class="reco-table">
+        <thead><tr><th>티커</th><th>이름</th><th style="text-align:right;">현재가</th><th style="text-align:right;">분배율</th></tr></thead>
+        <tbody>${items.map(recoRowHtml).join('')}</tbody>
+      </table>
+    </div>`;
+}
+
+function renderRecommended(recoWrap, data) {
+  const us = data.us_etfs || data.us || [];
+  const kr = data.kr_etfs || data.kr || [];
+  if ((!us || us.length === 0) && (!kr || kr.length === 0)) {
+    recoWrap.innerHTML = '';
+    return;
+  }
+  recoWrap.innerHTML = `
+    <div class="reco-title-row">
+      <span class="reco-heading">⭐ 추천 ETF<span class="sub">클릭하면 바로 조회됩니다</span></span>
+    </div>
+    <div class="reco-grid">
+      ${recoTableHtml('미국 ETF', '🇺🇸', us)}
+      ${recoTableHtml('국내 ETF', '🇰🇷', kr)}
+    </div>`;
+
+  recoWrap.querySelectorAll('.reco-row').forEach((row) => {
+    row.addEventListener('click', () => {
+      const code = row.dataset.code;
+      if (!code) return;
+      const input = document.getElementById('tickerInput');
+      input.value = code;
+      renderAsync();
+      input.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    });
+  });
+}
+
+async function loadRecommendedEtfs() {
+  const recoWrap = document.getElementById('recoWrap');
+  try {
+    const res = await fetch('recommended-etfs.json', { cache: 'no-store' });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    renderRecommended(recoWrap, data);
+  } catch (e) {
+    // JSON 파일이 아직 없거나 형식이 안 맞으면 조용히 패널을 숨김 (필수 기능이 아니므로 화면엔 에러를 안 띄움)
+    console.warn('추천 ETF 목록(recommended-etfs.json)을 불러오지 못했습니다:', e);
+    recoWrap.innerHTML = '';
+  }
+}
+
 document.getElementById('tickerInput').addEventListener('input', scheduleRender);
 document.getElementById('insuranceSelect').addEventListener('change', renderAsync);
 document.getElementById('capGainInput').addEventListener('input', renderAsync);
@@ -775,6 +874,7 @@ document.getElementById('amountsToggleBtn').addEventListener('click', () => {
 });
 
 renderAsync();
+loadRecommendedEtfs();
 </script>
 </body>
 </html>

@@ -1,0 +1,12 @@
+{
+  "us_etfs": [
+    { "code": "SCHD", "name": "Schwab US Dividend Equity ETF", "price": "$27.34", "yield": "3.8%" },
+    { "code": "QQQ",  "name": "Invesco QQQ Trust",              "price": "$512.10", "yield": "0.6%" },
+    { "code": "TQQQ", "name": "ProShares UltraPro QQQ",         "price": "$68.90",  "yield": "-" }
+  ],
+  "kr_etfs": [
+    { "code": "458730", "name": "TIGER 미국배당다우존스",     "price": "15,455원", "yield": "3.2%" },
+    { "code": "379800", "name": "KODEX 미국S&P500",           "price": "18,230원", "yield": "1.1%" },
+    { "code": "379810", "name": "KODEX 미국나스닥100",        "price": "20,150원", "yield": "0.7%" }
+  ]
+}
