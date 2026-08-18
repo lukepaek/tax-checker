@@ -125,6 +125,16 @@
   .tag.warn{background:var(--stamp-soft);color:var(--stamp);}
   .tag.neu{background:var(--navy-soft);color:var(--navy);}
 
+  .acct-reco{
+    margin:2px 0 14px;padding:9px 13px;border-radius:6px;font-size:0.8rem;
+    display:flex;flex-wrap:wrap;align-items:baseline;gap:7px;border:1px solid transparent;
+  }
+  .acct-reco.pos{background:var(--positive-soft);color:var(--positive);border-color:rgba(47,111,78,0.25);}
+  .acct-reco.warn{background:var(--stamp-soft);color:var(--stamp);border-color:rgba(166,57,43,0.25);}
+  .acct-reco.neu{background:var(--navy-soft);color:var(--navy);border-color:var(--line);}
+  .acct-reco b{font-size:0.85rem;}
+  .acct-reco-note{font-size:0.72rem;font-weight:400;color:var(--ink-soft);flex-basis:100%;}
+
   .stamp{
     position:absolute;right:38px;top:-6px;
     width:104px;height:104px;border:3px solid var(--stamp);border-radius:50%;
@@ -189,7 +199,7 @@
     font-size:0.72rem;font-weight:700;color:var(--navy);margin-bottom:6px;
     display:flex;align-items:center;gap:5px;
   }
-  .reco-table{width:100%;border-collapse:collapse;background:var(--paper-2);border:1px solid var(--line);border-radius:6px;overflow:hidden;}
+  .reco-table{width:100%;table-layout:fixed;border-collapse:collapse;background:var(--paper-2);border:1px solid var(--line);border-radius:6px;overflow:hidden;}
   .reco-table th{
     text-align:left;font-size:0.66rem;font-weight:700;color:var(--ink-soft);
     padding:6px 10px;border-bottom:1px solid var(--line);background:var(--navy-soft);
@@ -199,7 +209,11 @@
   .reco-row{cursor:pointer;transition:background 0.12s;}
   .reco-row:hover{background:var(--navy-soft);}
   .reco-row .reco-code{font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--navy);}
-  .reco-row .reco-price,.reco-row .reco-yield{font-family:'JetBrains Mono',monospace;text-align:right;}
+  .reco-row .reco-yield,.reco-row .reco-freq-cell{font-family:'JetBrains Mono',monospace;text-align:right;white-space:nowrap;}
+  .reco-row .reco-freq-cell{color:var(--ink-soft);font-size:0.7rem;}
+  .reco-table th:nth-child(1){width:52px;}
+  .reco-table th:nth-child(3){width:56px;}
+  .reco-table th:nth-child(4){width:58px;white-space:nowrap;}
   .reco-empty{font-size:0.74rem;color:var(--ink-soft);padding:8px 2px;}
 </style>
 </head>
@@ -744,6 +758,44 @@ function renderManualOverride(shape, detectArea, verdictWrap, footnoteList) {
   renderVerdict(category, verdictWrap, footnoteList);
 }
 
+function recommendAccount(category, v) {
+  if (!v.isaEligible) {
+    return { label: '일반계좌만 가능', note: '해외 직접 상장 종목은 국내 상장이 아니라 ISA에 편입할 수 없습니다.', tag: 'neu' };
+  }
+
+  if (v.hasAmounts) {
+    const normalTax = (v.normalCapTax.amount || 0) + (v.normalDistTax.amount || 0);
+    const isaTax = v.isaDistTax.amount || 0;
+    const riskFlag = v.insReport.tag === 'warn' || v.reportTarget.tag === 'warn';
+
+    if (isaTax < normalTax || riskFlag) {
+      const note = riskFlag
+        ? `세금도 일반계좌 ${WON(Math.round(normalTax))} → ISA ${WON(Math.round(isaTax))}로 줄고, 건보료·종합과세 영향까지 피할 수 있어요.`
+        : `입력한 금액 기준 예상 세금이 일반계좌 ${WON(Math.round(normalTax))} → ISA ${WON(Math.round(isaTax))}로 줄어듭니다.`;
+      return { label: 'ISA 계좌 추천', note, tag: 'pos' };
+    }
+    return {
+      label: '일반계좌로도 충분',
+      note: `입력한 금액 기준으로는 세금 차이가 크지 않아요 (일반 ${WON(Math.round(normalTax))} vs ISA ${WON(Math.round(isaTax))}).`,
+      tag: 'neu',
+    };
+  }
+
+  // 금액을 아직 입력 안 했으면 카테고리 기반 일반 가이드
+  if (category === 'overseas_etf') {
+    return {
+      label: 'ISA 계좌 추천',
+      note: '이 유형은 매매차익도 배당소득세로 과세돼서, ISA의 비과세·저율 분리과세 혜택이 특히 큽니다.',
+      tag: 'pos',
+    };
+  }
+  return {
+    label: '분배금 규모에 따라 달라짐',
+    note: '매매차익은 이미 비과세라 계좌 종류보다 분배금(배당) 규모가 중요합니다 — 위에서 금액을 입력하면 더 정확히 알려드려요.',
+    tag: 'neu',
+  };
+}
+
 function renderVerdict(category, verdictWrap, footnoteList) {
   const insurance = document.getElementById('insuranceSelect').value;
   const capGainRaw = document.getElementById('capGainInput').value;
@@ -752,6 +804,7 @@ function renderVerdict(category, verdictWrap, footnoteList) {
   const dist = distRaw === '' ? null : Math.max(0, parseFloat(distRaw) || 0);
 
   const v = computeVerdict(category, insurance, capGain, dist);
+  const reco = recommendAccount(category, v);
 
   const stampText = !v.isaEligible ? 'ISA<br>가입불가' : (v.hasAmounts && v.netProfit > ISA_TAXFREE_GENERAL ? '분리과세<br>9.9%' : '참고용<br>확인서');
 
@@ -767,6 +820,7 @@ function renderVerdict(category, verdictWrap, footnoteList) {
   verdictWrap.innerHTML = `
     <div class="stamp">${stampText}</div>
     <div class="verdict-head"><h2>판정 결과</h2><span>${insurance === 'local' ? '지역가입자' : insurance === 'worker' ? '직장가입자' : '피부양자'} 기준</span></div>
+    <div class="acct-reco ${reco.tag}">💡 추천: <b>${reco.label}</b><span class="acct-reco-note">${reco.note}</span></div>
     <table>
       <thead><tr><th></th><th>일반계좌</th><th>ISA 계좌</th></tr></thead>
       <tbody>
@@ -780,6 +834,7 @@ function renderVerdict(category, verdictWrap, footnoteList) {
 
   footnoteList.innerHTML = `
     <li>이 확인서는 2026년 8월 기준 일반적인 세법/건강보험료 규정을 정리한 <b>참고용</b> 계산기이며, 국세청·국민건강보험공단이 발급한 문서가 아닙니다. 개인별 다른 소득·공제 상황에 따라 실제 결과는 달라질 수 있습니다.</li>
+    <li><span class="flag">💡 상단 "추천" 배지는 세금·건보료 영향만 단순 비교한 참고용 판단입니다. ISA는 납입한도·의무가입기간(3~5년) 등 별도 제약이 있으니, 최종 결정 전에 반드시 확인하세요.</span></li>
     <li><span class="flag">⚠ 2026년 7월 보건복지부가 직장가입자 소득월액보험료 공제기준(현행 2,000만원)을 1,000만원으로 낮추는 방안을 검토 중이라고 보고했습니다. 아직 확정된 사항이 아니므로, 시행 여부와 시점을 반드시 다시 확인하세요.</span></li>
     <li>이자·배당소득 합계가 연 1,000만원 이하면 건강보험료 산정에서 아예 제외되고, 초과하면 전액이 반영됩니다 (일부만 반영되는 게 아니라 기준선 자체가 있는 방식).</li>
     <li>피부양자의 재산(건물·토지 등) 요건은 소득과 별개로 심사되므로, 소득 기준을 통과해도 재산 과세표준이 일정 금액을 넘으면 별도로 자격을 잃을 수 있습니다.</li>
@@ -790,19 +845,20 @@ function renderVerdict(category, verdictWrap, footnoteList) {
 
 // ------------------------------------------------------------------
 // 추천 ETF 패널 (01. 종목코드 위) — recommended-etfs.json을 읽어서 표로 보여줌.
-// 클릭하면 종목코드 입력창에 채워지고 바로 조회됨. 가격/분배율은 전부
-// JSON에 직접 적어둔 값을 그대로 표시(서버 조회 없음).
+// 클릭하면 종목코드 입력창에 채워지고 바로 조회됨(현재가 등 상세는 그 아래
+// 종목 상세 카드에서 실시간으로 보여주므로, 여기서는 티커·이름·분배율·배당주기만
+// JSON에 적어둔 값 그대로 표시하고 서버 조회는 하지 않습니다).
 // ------------------------------------------------------------------
 function recoRowHtml(item) {
   const code = item.code || '';
   const name = item.name || code;
-  const price = item.price || '-';
   const dividendYield = item.yield || '-';
+  const freq = item.frequency || '-';
   return `<tr class="reco-row" data-code="${code}">
     <td class="reco-code">${code}</td>
     <td>${name}</td>
-    <td class="reco-price">${price}</td>
     <td class="reco-yield">${dividendYield}</td>
+    <td class="reco-freq-cell">${freq}</td>
   </tr>`;
 }
 
@@ -814,7 +870,7 @@ function recoTableHtml(title, flagEmoji, items) {
     <div>
       <div class="reco-col-title">${flagEmoji} ${title}</div>
       <table class="reco-table">
-        <thead><tr><th>티커</th><th>이름</th><th style="text-align:right;">현재가</th><th style="text-align:right;">분배율</th></tr></thead>
+        <thead><tr><th>티커</th><th>이름</th><th style="text-align:right;">분배율</th><th style="text-align:right;">배당주기</th></tr></thead>
         <tbody>${items.map(recoRowHtml).join('')}</tbody>
       </table>
     </div>`;

@@ -267,12 +267,134 @@ def get_quote(code, force_refresh=False):
 @etf_bp.route("/api/quote/<code>")
 def quote_ticker(code):
     code = (code or "").strip()
-    if not re.fullmatch(r"\d{6}", code):
-        return jsonify({"error": "6자리 국내 종목코드만 지원합니다"}), 400
+    if re.fullmatch(r"\d{6}", code):
+        try:
+            return jsonify(get_quote(code))
+        except Exception as e:
+            return jsonify({"error": f"시세 조회 실패: {e}"}), 502
+
+    if re.fullmatch(r"[A-Za-z.]{1,6}", code):
+        code = code.upper()
+        try:
+            return jsonify(get_us_quote(code))
+        except Exception as e:
+            return jsonify({"error": f"시세 조회 실패: {e}"}), 502
+
+    return jsonify({"error": "6자리 국내 종목코드 또는 영문 1~6자 티커만 지원합니다"}), 400
+
+
+# ---------------------------------------------------------------------------
+# 해외(미국) 티커 현재가 조회 — /api/quote/<TICKER>
+#
+# 차트에서 쓰던 야후 파이낸스 chart API를 그대로 재사용: 이 API 응답의 "meta"
+# 필드에 regularMarketPrice(현재가)·previousClose(전일종가)가 이미 들어있어서
+# 별도 엔드포인트 없이 바로 뽑아 씀. 야후가 막히면 stooq.com 실시간 시세로 폴백.
+# 국내처럼 배당수익률까지는 안정적으로 못 구해서 가격/등락률만 반환합니다.
+# 30초 캐싱(국내 시세와 동일 TTL).
+# ---------------------------------------------------------------------------
+STOOQ_QUOTE_URL_TMPL = "https://stooq.com/q/l/?s={ticker}.us&f=sd2t2ohlcv&h&e=csv"
+
+_us_quote_cache_lock = threading.Lock()
+_us_quote_cache = {}  # ticker -> (fetched_at, data)
+
+
+def _fetch_us_price_yahoo(ticker):
+    params = {"range": "5d", "interval": "1d"}
+    resp = requests.get(
+        YAHOO_CHART_URL_TMPL.format(ticker=ticker),
+        params=params,
+        headers=_US_HEADERS,
+        timeout=REQUEST_TIMEOUT,
+    )
+    resp.raise_for_status()
+    payload = resp.json()
+    results = ((payload.get("chart") or {}).get("result")) or []
+    if not results:
+        err = ((payload.get("chart") or {}).get("error")) or {}
+        raise ValueError(err.get("description") or "야후 파이낸스 응답에 데이터가 없습니다")
+
+    meta = results[0].get("meta") or {}
+    price = meta.get("regularMarketPrice")
+    prev_close = meta.get("previousClose") or meta.get("chartPreviousClose")
+    if price is None:
+        raise ValueError("야후 파이낸스 응답에 현재가 필드가 없습니다")
+
+    change_price = change_rate = None
+    if prev_close:
+        change_price = price - prev_close
+        change_rate = (change_price / prev_close) * 100
+
+    return {
+        "code": ticker,
+        "price": price,
+        "changePrice": change_price,
+        "changeRate": change_rate,
+        "currency": meta.get("currency", "USD"),
+        "dividendYieldRatio": None,
+        "dividendYieldSource": None,
+        "dividendPerShare": None,
+    }
+
+
+def _fetch_us_price_stooq(ticker):
+    url = STOOQ_QUOTE_URL_TMPL.format(ticker=ticker.lower())
+    resp = requests.get(url, headers=_US_HEADERS, timeout=REQUEST_TIMEOUT)
+    resp.raise_for_status()
+    lines = resp.text.strip().splitlines()
+    if len(lines) < 2:
+        raise ValueError("stooq 응답이 비어있습니다")
+    # 헤더: Symbol,Date,Time,Open,High,Low,Close,Volume
+    cols = lines[1].split(",")
+    if len(cols) < 7:
+        raise ValueError("stooq 응답 형식이 예상과 다릅니다")
     try:
-        return jsonify(get_quote(code))
+        price = float(cols[6])
+    except (TypeError, ValueError):
+        raise ValueError("stooq 응답에서 가격을 읽지 못했습니다")
+    return {
+        "code": ticker,
+        "price": price,
+        "changePrice": None,
+        "changeRate": None,
+        "currency": "USD",
+        "dividendYieldRatio": None,
+        "dividendYieldSource": None,
+        "dividendPerShare": None,
+    }
+
+
+def _fetch_us_price(ticker):
+    """야후를 먼저 시도하고, 실패하면 stooq로 폴백."""
+    try:
+        return _fetch_us_price_yahoo(ticker)
+    except Exception as e_yahoo:
+        try:
+            return _fetch_us_price_stooq(ticker)
+        except Exception as e_stooq:
+            raise ValueError(f"야후: {e_yahoo} / stooq: {e_stooq}")
+
+
+def get_us_quote(ticker, force_refresh=False):
+    with _us_quote_cache_lock:
+        cached = _us_quote_cache.get(ticker)
+        is_stale = cached is None or (time.time() - cached[0]) > QUOTE_CACHE_TTL_SECONDS
+
+    if not is_stale and not force_refresh:
+        return cached[1]
+
+    try:
+        data = _fetch_us_price(ticker)
     except Exception as e:
-        return jsonify({"error": f"시세 조회 실패: {e}"}), 502
+        logger.warning("해외 시세 조회 실패(%s), 기존 캐시 유지: %s", ticker, e)
+        with _us_quote_cache_lock:
+            cached = _us_quote_cache.get(ticker)
+        if cached is not None:
+            return cached[1]
+        raise
+
+    with _us_quote_cache_lock:
+        _us_quote_cache[ticker] = (time.time(), data)
+    return data
 
 
 # ---------------------------------------------------------------------------

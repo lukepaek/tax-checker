@@ -1,12 +1,15 @@
 {
   "us_etfs": [
-    { "code": "SCHD", "name": "Schwab US Dividend Equity ETF", "price": "$27.34", "yield": "3.8%" },
-    { "code": "QQQ",  "name": "Invesco QQQ Trust",              "price": "$512.10", "yield": "0.6%" },
-    { "code": "TQQQ", "name": "ProShares UltraPro QQQ",         "price": "$68.90",  "yield": "-" }
+    { "code": "SCHD", "name": "Schwab US Dividend Equity ETF", "yield": "3.8%", "frequency": "분기배당" },
+    { "code": "QQQ",  "name": "Invesco QQQ Trust", "yield": "0.6%", "frequency": "분기배당" },
+    { "code": "VOO",  "name": "Vanguard S&P 500 ETF", "yield": "1.3%", "frequency": "분기배당" },
+    { "code": "JEPQ", "name": "JPMorgan Nasdaq Equity Premium Income ETF", "yield": "9.2%", "frequency": "월배당" },
+    { "code": "JEPI", "name": "JPMorgan Equity Premium Income ETF", "yield": "7.5%", "frequency": "월배당" }
   ],
   "kr_etfs": [
-    { "code": "458730", "name": "TIGER 미국배당다우존스",     "price": "15,455원", "yield": "3.2%" },
-    { "code": "379800", "name": "KODEX 미국S&P500",           "price": "18,230원", "yield": "1.1%" },
-    { "code": "379810", "name": "KODEX 미국나스닥100",        "price": "20,150원", "yield": "0.7%" }
+    { "code": "458730", "name": "TIGER 미국배당다우존스",  "yield": "3.2%", "frequency": "월배당" },
+    { "code": "458750", "name": "TIGER 미국배당+3%프리미엄다우존스","yield": "6.8%", "frequency": "월배당" },
+    { "code": "458760", "name": "TIGER 미국배당+7%프리미엄다우존스","yield": "10.2%", "frequency": "월배당" },
+    { "code": "161510", "name": "PLUS 고배당주","yield": "4.8%", "frequency": "월배당" }
   ]
 }
